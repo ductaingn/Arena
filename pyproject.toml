@@ -10,6 +10,7 @@ members = [
     "arena_runtime/arena_runtime",
     "arena_simulation_setup/src",
     "task_generator",
+    "utils/arena_animation_retarget",
     "utils/arena_cam",
     "utils/arena_rclpy_mixins",
     "utils/arena_viz",

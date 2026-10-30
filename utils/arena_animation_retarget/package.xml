@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<package format="3">
+  <name>arena_animation_retarget</name>
+  <version>0.0.0</version>
+  <description>Retarget SMPL-X body motion (Kimodo output, AMASS-style parameters) onto Arena 40-DOF human wire clips: rotation retarget plus batched whole-body IK on the GPU.</description>
+  <maintainer email="ductaingn.015203@gmail.com">ductaingn</maintainer>
+  <license>TODO</license>
+
+  <exec_depend>task_generator</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-torch</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
