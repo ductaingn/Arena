@@ -125,3 +125,27 @@ def test_cli_pair_single_source_flags_refuse_several_pairs(tmp_path, flag):
     with pytest.raises(SystemExit, match="single SRC"):
         cli_main([str(src), "-o", str(out), "--pair", flag, "x", "--method", "none", "-q"])
     assert not out.exists()
+
+
+@pytest.mark.parametrize("value", ["10", "20:5", "a:b"])
+def test_cli_pair_window_refuses_a_malformed_range(tmp_path, capsys, value):
+    with pytest.raises(SystemExit):
+        cli_main([str(tmp_path), "-o", str(tmp_path / "anim"), "--pair", "--window", value])
+    assert "F0:F1" in capsys.readouterr().err
+
+
+def test_window_outside_the_clip_holds_no_frames():
+    m0, m1 = _motions()
+    with pytest.raises(ValueError, match="no frames"):
+        window(m0, m1, (500, 900))
+
+
+def test_cli_pair_too_short_for_the_window_fails_alone(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    _save_pair(src / "long.npz", _handshake(90))
+    _save_pair(src / "short.npz", _handshake(30))
+    out = tmp_path / "anim"
+    assert cli_main([str(src), "-o", str(out), "--pair", "--window", "40:60", "--method", "none", "-q"]) == 1
+    assert (out / "long_a" / "long_a.npz").exists()
+    assert not (out / "short_a").exists()

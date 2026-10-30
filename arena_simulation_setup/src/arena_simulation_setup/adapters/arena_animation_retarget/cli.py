@@ -93,26 +93,26 @@ def _find_pairs(srcs: list[Path]) -> list[Path]:
 
 def _run_pairs(a: argparse.Namespace, files: list[Path], names: list[str]) -> int:
     from . import ik
-    from .pair import load_pair, pair_annotation, retarget_pairs
+    from .pair import load_pair, pair_annotation, retarget_pairs, window
 
     say = (lambda *x: None) if a.quiet else print
     cfg = None if a.method == "none" else ik.IKConfig.preset(a.method)
     if cfg is not None and a.iters:
         cfg = cfg.with_(iters=a.iters)
-    lo, _, hi = a.window.partition(":")
-    win: str | tuple[int, int] = a.window if a.window in ("all", "auto") else (int(lo), int(hi))
     todo = [i for i, n in enumerate(names) if not (a.skip_existing and (a.out / f"{n}_a" / f"{n}_a.npz").exists())]
     say(f"retarget: {len(todo)} of {len(files)} pairs, method {a.method}, window {a.window}, {a.passes} contact passes")
     pairs, ok, failed, rows, t0 = [], [], [], [], time.time()
     for i in todo:
         try:
-            pairs.append(load_pair(files[i], up=a.up, fps=a.fps_in, model=a.model))
+            pair = load_pair(files[i], up=a.up, fps=a.fps_in, model=a.model)
+            window(*pair, a.window)
+            pairs.append(pair)
             ok.append(i)
         except Exception as e:  # noqa: BLE001
             failed.append((files[i], f"{type(e).__name__}: {e}"))
             say(f"  skip {files[i]}: {e}")
     if pairs:
-        res = retarget_pairs(pairs, window_mode=win, passes=a.passes, fps=a.fps, method=a.method, device=a.device, config=cfg, fold_tilt=not a.no_fold)
+        res = retarget_pairs(pairs, window_mode=a.window, passes=a.passes, fps=a.fps, method=a.method, device=a.device, config=cfg, fold_tilt=not a.no_fold)
         for i, (m0, _), r in zip(ok, pairs, res, strict=True):
             pn = (f"{names[i]}_a", f"{names[i]}_b")
             ce = " ".join(f"{k}={v:.1f}" for k, v in r.contact.items() if k.startswith("contact_m"))
@@ -143,6 +143,15 @@ def _prep_job(job: tuple[int, Path, str, float | None, str | None, bool]) -> tup
         return i, None, f"{type(e).__name__}: {e}"
 
 
+def _window(value: str) -> str | tuple[int, int]:
+    if value in ("auto", "all"):
+        return value
+    lo, sep, hi = value.partition(":")
+    if not (sep and lo.isdigit() and hi.isdigit() and int(lo) < int(hi)):
+        raise argparse.ArgumentTypeError(f"{value!r}: use auto, all, or F0:F1 with F0 < F1")
+    return int(lo), int(hi)
+
+
 def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="animation_retarget", description="Retarget SMPL-X motion onto Arena's 40-DOF human wire.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("src", nargs="+", type=Path, help="SMPL-X .npz files and/or directories (recursive)")
@@ -171,7 +180,7 @@ def _parser() -> argparse.ArgumentParser:
     g.add_argument("--no-fold", action="store_true", help="keep the body pelvis-relative instead of folding pelvis tilt into waist/hips; the clip is annotated pelvis_tilt and Arena tilts the ped by root_quat (falls, lying)")
     g = ap.add_argument_group("two-person interactions")
     g.add_argument("--pair", action="store_true", help="each SRC is a two-person interaction -> <name>_a, <name>_b")
-    g.add_argument("--window", default="auto", help="source frames to keep: auto (touching frames, padded), all, or F0:F1")
+    g.add_argument("--window", type=_window, default="auto", help="source frames to keep: auto (touching frames, padded), all, or F0:F1")
     g.add_argument("--passes", type=int, default=2, help="contact IK passes (anchor targets from the previous pass)")
     g = ap.add_argument_group("report")
     g.add_argument("--report", type=Path, help="write per-clip fidelity metrics to this CSV")

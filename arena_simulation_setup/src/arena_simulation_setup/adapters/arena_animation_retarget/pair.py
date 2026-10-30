@@ -152,7 +152,10 @@ def window(m0: Motion, m1: Motion, mode: str | tuple[int, int] = "auto") -> tupl
     """Source frames to keep: "all", "auto" (touching frames, padded; all if they never touch) or explicit."""
     T = min(len(m0), len(m1))
     if isinstance(mode, tuple):
-        return max(0, mode[0]), min(T, mode[1])
+        f0, f1 = max(0, mode[0]), min(T, mode[1])
+        if f0 >= f1:
+            raise ValueError(f"window {mode} holds no frames of {T}")
+        return f0, f1
     if mode == "all":
         return 0, T
     if mode != "auto":
