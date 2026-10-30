@@ -88,6 +88,15 @@ def test_body_is_read_from_the_annotation_beside_the_actor(tmp_path):
     assert load_body("") is None
 
 
+@pytest.mark.parametrize("skin", ["not xml", "<COLLADA/>"])
+def test_annotated_body_outlives_an_unreadable_skin(tmp_path, skin):
+    sdf = tmp_path / "nurse" / "model.sdf"
+    (sdf.parent / "meshes").mkdir(parents=True)
+    (sdf.parent / "meshes" / "model.dae").write_text(skin)
+    (sdf.parent / "annotation.yaml").write_text(yaml.safe_dump({"pelvis_clearance": {"sit": 0.12, "lie": 0.11}, "legs": {"hip": 0.015, "thigh": 0.36, "shin": 0.375, "ankle": 0.08}}))
+    assert load_body(str(sdf)) == BODY
+
+
 SQUAT = [{"t": k / 20.0, "angles": {**dict.fromkeys(JOINT_NAMES, 0.0), "l_r_hip": h, "r_r_hip": h, "l_knee": -2.0 * h, "r_knee": -2.0 * h, "waist": 0.3 * h}} for k, h in enumerate(np.linspace(0.0, 1.5, 21))]
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import math
 import typing
+import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -80,6 +81,16 @@ TYPICAL_BODY = BodyMeasurements(clearance=PelvisClearance(sit=0.105, lie=0.119, 
 SEAT_FIT_STEPS = 4  # fixed-point steps between the seated pelvis height and the hip flexion it gives
 
 
+def _read_skin(path: Path) -> human.Skin | None:
+    """The skin in a COLLADA file, None when it is missing or unreadable."""
+    if not path.is_file():
+        return None
+    try:
+        return human.read_skin(path)
+    except (ET.ParseError, KeyError, ValueError):
+        return None
+
+
 def load_body(model_uri: str) -> BodyMeasurements | None:
     """Measurements in the annotation beside an actor SDF, else measured off its skin (meshes/<name>.dae), None without either.
 
@@ -91,7 +102,7 @@ def load_body(model_uri: str) -> BodyMeasurements | None:
     path = sdf.with_name(ANNOTATION_FILE)
     annotation = (yaml.safe_load(path.read_text()) or {}) if path.is_file() else {}
     skin_path = sdf.parent / "meshes" / f"{sdf.stem}.dae"
-    skin = human.read_skin(skin_path) if skin_path.is_file() and not (annotation.get("pelvis_clearance") and annotation.get("legs") and annotation.get("proportions")) else None
+    skin = _read_skin(skin_path) if not (annotation.get("pelvis_clearance") and annotation.get("legs") and annotation.get("proportions")) else None
     if annotation.get("proportions"):
         proportions = Proportions(**annotation["proportions"])
     else:
