@@ -111,7 +111,7 @@ def _run_pairs(a: argparse.Namespace, files: list[Path], names: list[str]) -> in
             failed.append((files[i], f"{type(e).__name__}: {e}"))
             say(f"  skip {files[i]}: {e}")
     if pairs:
-        res = retarget_pairs(pairs, window_mode=a.window, passes=a.passes, fps=a.fps, method=a.method, device=a.device, config=cfg, fold_tilt=not a.no_fold)
+        res = retarget_pairs(pairs, window_mode=a.window, passes=a.passes, fps=a.fps, method=a.method, device=a.device, config=cfg, chunk_frames=a.chunk_frames)
         for i, (m0, _), r in zip(ok, pairs, res, strict=True):
             pn = (f"{names[i]}_a", f"{names[i]}_b")
             ce = " ".join(f"{k}={v:.1f}" for k, v in r.contact.items() if k.startswith("contact_m"))
@@ -174,7 +174,7 @@ def _parser() -> argparse.ArgumentParser:
     g.add_argument("--device", default="auto", help="torch device for the IK (auto: cuda if available)")
     g.add_argument("--iters", type=int, help="L-BFGS iterations per chunk (default: the method's, 300)")
     g.add_argument("--chunk-frames", type=int, default=400_000, help="frames per batched IK solve (GPU memory)")
-    g.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1), help="processes loading/preparing files")
+    g.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1), help="processes loading/preparing files (--pair loads in this process)")
     g.add_argument("--fps", type=float, default=20.0, help="output rate (Arena's clip rate)")
     g.add_argument("--no-fold", action="store_true", help="keep the body pelvis-relative instead of folding pelvis tilt into waist/hips; the clip is annotated pelvis_tilt and Arena tilts the ped by root_quat (falls, lying)")
     g = ap.add_argument_group("two-person interactions")
@@ -190,7 +190,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    a = _parser().parse_args(argv)
+    ap = _parser()
+    a = ap.parse_args(argv)
+    if a.pair and (a.no_fold or a.check or a.no_score):
+        ap.error("--pair takes no --no-fold (contacts are solved on upright bodies), --check or --no-score (pairs are scored by their contact error)")
     from . import fidelity, ik  # torch import after argument parsing: --help stays fast
 
     files = _find_pairs(a.src) if a.pair else _find(a.src)

@@ -87,7 +87,7 @@ from arena_simulation_setup.adapters.arena_animation_retarget.pair import load_p
 res = retarget_pairs([load_pair("hug.npz")])[0]   # res.clips = (a, b), res.placements, res.contact
 ```
 
-Each source holds two people and becomes two clips, `<name>_a` and `<name>_b`. Sources:
+Each source holds two people and becomes two clips, `<name>_a` and `<name>_b`. `--no-fold`, `--check` and `--no-score` do not apply: contacts are solved on upright bodies and pairs are scored by their contact error. Sources:
 - an `.npz` whose arrays carry `p0_` / `p1_` key prefixes, e.g. the InterMask (Inter-X) export: `p0_root_orient`,
   `p0_pose_body`, `p0_trans`, …;
 - a directory holding `P1.npz` and `P2.npz`, the Inter-X dataset layout.

@@ -253,21 +253,21 @@ def contact_error(cs: list[dict], worlds: list[dict], places: list[Placement], s
 # ---- API -----------------------------------------------------------------------------------------------------------
 
 
-def retarget_pairs(pairs: list[tuple[Motion, Motion]], window_mode: str | tuple[int, int] = "auto", passes: int = 2, fps: float = 20.0, method: str = "ik", device: str = "auto", config: IKConfig | None = None, fold_tilt: bool = True, height: float = 1.75, verbose: bool = False) -> list[PairResult]:
+def retarget_pairs(pairs: list[tuple[Motion, Motion]], window_mode: str | tuple[int, int] = "auto", passes: int = 2, fps: float = 20.0, method: str = "ik", device: str = "auto", config: IKConfig | None = None, height: float = 1.75, verbose: bool = False, chunk_frames: int = 400_000) -> list[PairResult]:
     """Retarget two-person motions; every person of every pair goes through one batched IK per pass."""
     from . import ik
 
     cfg = config or ik.IKConfig.preset("ik" if method == "none" else method)
     wins = [window(a, b, window_mode) for a, b in pairs]
     ms = [_slice(m, *w) for (a, b), w in zip(pairs, wins, strict=True) for m in (a, b)]
-    preps = [prepare(m, fold_tilt, height) for m in ms]
+    preps = [prepare(m, True, height) for m in ms]
     yaws = [_yaw(m) for m in ms]
     cs = [source_contacts(ms[i], ms[i ^ 1], yaws[i ^ 1]) for i in range(len(ms))]
     strength = [np.maximum(cs[i]["w"].max(1), cs[i ^ 1]["w"].max(1)) for i in range(len(ms))]
     places = [placement(p, w) for p, w in zip(preps, strength, strict=True)]
     scale = float(np.mean([p.scale["upper"] for p in preps]))  # source -> Arena upper-body size, for the offsets
     arena = _ArenaWorld(height)
-    sols = [p.init for p in preps] if method == "none" else ik.solve(preps, cfg, device=device, verbose=verbose)
+    sols = [p.init for p in preps] if method == "none" else ik.solve(preps, cfg, device=device, chunk_frames=chunk_frames, verbose=verbose)
     before = None
     for _ in range(passes if method != "none" else 0):
         worlds = [arena(s, pl) for s, pl in zip(sols, places, strict=True)]
@@ -277,7 +277,7 @@ def retarget_pairs(pairs: list[tuple[Motion, Motion]], window_mode: str | tuple[
             (w, floor), (wp, _) = worlds[i], worlds[i ^ 1]
             tgt, wt = _anchors(cs[i], w, wp, places[i], places[i ^ 1], floor, scale)
             preps[i].targets["anchor"], preps[i].targets["anchor_w"] = tgt, wt
-        sols = ik.solve(preps, cfg, device=device, verbose=verbose)
+        sols = ik.solve(preps, cfg, device=device, chunk_frames=chunk_frames, verbose=verbose)
     worlds = [arena(s, pl)[0] for s, pl in zip(sols, places, strict=True)]
     out = []
     for n, i in enumerate(range(0, len(ms), 2)):
@@ -288,8 +288,8 @@ def retarget_pairs(pairs: list[tuple[Motion, Motion]], window_mode: str | tuple[
     return out
 
 
-def retarget_pair(m0: Motion, m1: Motion, window_mode: str | tuple[int, int] = "auto", passes: int = 2, fps: float = 20.0, method: str = "ik", device: str = "auto", config: IKConfig | None = None, fold_tilt: bool = True, height: float = 1.75, verbose: bool = False) -> PairResult:
-    return retarget_pairs([(m0, m1)], window_mode, passes, fps, method, device, config, fold_tilt, height, verbose)[0]
+def retarget_pair(m0: Motion, m1: Motion, window_mode: str | tuple[int, int] = "auto", passes: int = 2, fps: float = 20.0, method: str = "ik", device: str = "auto", config: IKConfig | None = None, height: float = 1.75, verbose: bool = False, chunk_frames: int = 400_000) -> PairResult:
+    return retarget_pairs([(m0, m1)], window_mode, passes, fps, method, device, config, height, verbose, chunk_frames)[0]
 
 
 def pair_annotation(res: PairResult, names: tuple[str, str], role: int, fps_src: float) -> dict:

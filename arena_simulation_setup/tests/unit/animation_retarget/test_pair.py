@@ -151,6 +151,20 @@ def test_cli_pair_directory_as_source_takes_its_own_name_from_path(tmp_path):
     assert (out / "G001_a" / "G001_a.npz").exists()
 
 
+@pytest.mark.parametrize("flag", ["--no-fold", "--check", "--no-score"])
+def test_cli_pair_refuses_single_person_flags(tmp_path, capsys, flag):
+    with pytest.raises(SystemExit):
+        cli_main([str(tmp_path), "-o", str(tmp_path / "anim"), "--pair", flag])
+    assert "--pair takes no" in capsys.readouterr().err
+
+
+def test_chunked_pair_solve_matches_one_chunk():
+    whole = retarget_pair(*_motions(), window_mode="all", passes=1)
+    chunked = retarget_pair(*_motions(), window_mode="all", passes=1, chunk_frames=1)
+    for a, b in zip(whole.clips, chunked.clips, strict=True):
+        assert np.allclose(np.stack(list(a.angles.values())), np.stack(list(b.angles.values())), atol=0.05)
+
+
 def test_cli_pair_too_short_for_the_window_fails_alone(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
