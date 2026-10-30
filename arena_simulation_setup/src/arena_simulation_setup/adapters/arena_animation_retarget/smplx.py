@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from scipy.sparse import issparse
 from scipy.spatial.transform import Rotation
 
 JOINTS = ("pelvis", "l_hip", "r_hip", "spine1", "l_knee", "r_knee", "spine2", "l_ankle", "r_ankle", "spine3", "l_foot", "r_foot", "neck", "l_collar", "r_collar", "head", "l_shoulder", "r_shoulder", "l_elbow", "r_elbow", "l_wrist", "r_wrist")
@@ -115,7 +116,7 @@ def rest_offsets_from_model(model_path: str | Path, betas: np.ndarray | None = N
         dirs = m["shapedirs"][:, :, : min(len(b), m["shapedirs"].shape[2])].astype(float)
         v = v + dirs @ b[: dirs.shape[2]]
     reg = m["J_regressor"]
-    reg = reg.toarray() if hasattr(reg, "toarray") else np.asarray(reg, dtype=float)
+    reg = reg.toarray() if issparse(reg) else np.asarray(reg, dtype=float)
     joints = reg[:22] @ v
     off = np.zeros((22, 3))
     for j, p in enumerate(PARENTS):
