@@ -73,6 +73,7 @@ from task_generator.shared import Wall as WallDefinition
 from task_generator.utils.flags import ObstaclesOptim, obstacles_optim_level
 
 from arena_runtime._node import NodeInterface
+from arena_runtime.constants import SimSimulator
 from arena_runtime.sim import BaseSim, SimKwargs, SimLifecycle
 from arena_runtime.sim._control import (
     effective_control_yaml,
@@ -347,6 +348,7 @@ class MujocoSimulator(BaseSim, NodeInterface):
                     control_spec.config,
                     robot.sim_path,
                     robot.frame.tf(),
+                    sim=SimSimulator.MUJOCO,
                     prefix=control_prefix,
                 )
                 if control_spec.config is not None
