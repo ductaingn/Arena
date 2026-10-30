@@ -60,6 +60,8 @@ The package contributes four domains to the `arena_mcp` server, listed with
   `assets_import_sources` lists the datasets `arena asset import` converts
   from, `assets_import_items` one dataset's item ids, and `assets_import` runs
   the import of chosen items as a job whose result lists the item paths.
+  `assets_retarget_animation` runs the `animation_retarget` tool on SMPL-X
+  files as a job whose result lists the clip directories.
   `assets_articulation` resolves one object and lists its links, joints (type,
   parent, child, limits, speed), named states, detents, field families (each
   family with its member joints) and swept box, or says it is rigid.

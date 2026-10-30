@@ -54,7 +54,7 @@ def test_pull_of_a_world_absent_from_the_bucket_fails():
 
 
 def test_domain_serves_only_the_arena_asset_verbs():
-    assert sorted(spec.name for spec in assets.domain.tools) == ["assets_articulation", "assets_find", "assets_import", "assets_import_items", "assets_import_sources", "assets_kinds", "assets_ls", "assets_pull", "assets_push"]
+    assert sorted(spec.name for spec in assets.domain.tools) == ["assets_articulation", "assets_find", "assets_import", "assets_import_items", "assets_import_sources", "assets_kinds", "assets_ls", "assets_pull", "assets_push", "assets_retarget_animation"]
 
 
 @sourced
@@ -79,6 +79,11 @@ def test_import_items_lists_a_dataset_filtered_and_capped():
 def test_import_of_an_unregistered_source_is_refused_before_a_job_starts():
     with pytest.raises(ToolError, match="no world import source 'nope'"):
         asyncio.run(assets.assets_import("world", "nope", ["1"]))
+
+
+def test_retarget_of_a_missing_source_is_refused_before_a_job_starts(tmp_path):
+    with pytest.raises(ToolError, match="no such source"):
+        asyncio.run(assets.assets_retarget_animation([str(tmp_path / "nope.npz")], str(tmp_path)))
 
 
 @pytest.fixture
