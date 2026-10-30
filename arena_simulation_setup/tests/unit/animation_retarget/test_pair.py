@@ -10,9 +10,9 @@ import pytest
 import yaml
 from scipy.spatial.transform import Rotation
 
-from arena_animation_retarget.cli import main as cli_main
-from arena_animation_retarget.pair import load_pair, retarget_pair, window
-from arena_animation_retarget.smplx import REST_OFFSETS, J, forward_kinematics
+from arena_simulation_setup.adapters.arena_animation_retarget.cli import main as cli_main
+from arena_simulation_setup.adapters.arena_animation_retarget.pair import load_pair, retarget_pair, window
+from arena_simulation_setup.adapters.arena_animation_retarget.smplx import REST_OFFSETS, J, forward_kinematics
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_retarget import FPS, load_motion  # noqa: E402

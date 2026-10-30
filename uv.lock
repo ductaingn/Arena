@@ -9,7 +9,6 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "arena-animation-retarget",
     "arena-bringup",
     "arena-cam",
     "arena-cli",
@@ -192,32 +191,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/25/fb/a7fab980d4eb31a1ce4d2a855fb3aac8d46466337b1113203eca8024f193/apsw-3.53.2.0-cp312-cp312-win_amd64.whl", hash = "sha256:a3c3d8a257b830b72b0e178784611b19c3e0c910236ccb77475726f367958427", size = 3220526, upload-time = "2026-06-04T22:08:12.432Z" },
     { url = "https://files.pythonhosted.org/packages/2c/63/f8518c71e51edcf3236818d4a4aae17190a22ba43f9989ee9f7f78bc6e28/apsw-3.53.2.0-cp312-cp312-win_arm64.whl", hash = "sha256:ca708d0d79c3b970fabe4f2ab1511af60d7a7d6576bb8848f8111c9e0ec1cdaf", size = 2870535, upload-time = "2026-06-04T22:08:13.924Z" },
 ]
-
-[[package]]
-name = "arena-animation-retarget"
-version = "0.0.0"
-source = { virtual = "utils/arena_animation_retarget" }
-dependencies = [
-    { name = "numpy" },
-    { name = "pyyaml" },
-    { name = "scipy" },
-    { name = "torch" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
-    { name = "pyyaml" },
-    { name = "scipy" },
-    { name = "torch" },
-]
-provides-extras = ["test"]
 
 [[package]]
 name = "arena-bringup"
@@ -445,6 +418,7 @@ dependencies = [
     { name = "requests" },
     { name = "scipy" },
     { name = "shapely" },
+    { name = "torch" },
     { name = "typing-extensions" },
     { name = "usd-core" },
 ]
@@ -464,6 +438,7 @@ requires-dist = [
     { name = "requests" },
     { name = "scipy" },
     { name = "shapely", specifier = ">=2.0.6" },
+    { name = "torch" },
     { name = "typing-extensions" },
     { name = "usd-core" },
 ]

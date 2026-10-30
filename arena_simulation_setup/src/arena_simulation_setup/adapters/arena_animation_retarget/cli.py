@@ -1,6 +1,6 @@
-"""retarget: SMPL-X motion files -> Arena Animation clips, in batches, whole-body IK on the GPU.
+"""animation_retarget: SMPL-X motion files -> Arena Animation clips, in batches, whole-body IK on the GPU.
 
-    ros2 run arena_animation_retarget retarget SRC [SRC ...] -o OUT_DIR [options]
+    ros2 run arena_simulation_setup animation_retarget SRC [SRC ...] -o OUT_DIR [options]
 
 SRC: .npz files and/or directories (searched recursively for *.npz). Each motion becomes OUT_DIR/<name>/<name>.npz +
 annotation.yaml, name = file stem (--name-from-path for path-based names when stems repeat). Point OUT_DIR at
@@ -11,7 +11,7 @@ of up to --chunk-frames and each chunk is solved in one batched IK on the GPU (-
 
 --pair: every SRC is a two-person interaction (an .npz with p0_/p1_ key prefixes, e.g. the InterMask export, or a
 directory with P1.npz + P2.npz, the Inter-X layout) and becomes two clips, <name>_a and <name>_b, retargeted together so
-their contacts meet on Arena's bodies (see arena_animation_retarget.pair). Each annotation gets a `pair` block: the
+their contacts meet on Arena's bodies (see .pair). Each annotation gets a `pair` block: the
 partner clip and where the partner stands (x forward, y left, relative heading).
 """
 
@@ -144,7 +144,7 @@ def _prep_job(job: tuple[int, Path, str, float | None, str | None, bool]) -> tup
 
 
 def _parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="retarget", description="Retarget SMPL-X motion onto Arena's 40-DOF human wire.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    ap = argparse.ArgumentParser(prog="animation_retarget", description="Retarget SMPL-X motion onto Arena's 40-DOF human wire.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("src", nargs="+", type=Path, help="SMPL-X .npz files and/or directories (recursive)")
     ap.add_argument("-o", "--out", type=Path, required=True, help="Animation directory to write clip folders into")
     g = ap.add_argument_group("naming and annotation")

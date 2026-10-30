@@ -7,9 +7,9 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
-from arena_animation_retarget.contract import SK, WIRE
-from arena_animation_retarget.retarget import ARM_REST, heading, rest_maps
-from arena_animation_retarget.smplx import J, Motion
+from arena_simulation_setup.adapters.arena_animation_retarget.contract import SK, WIRE
+from arena_simulation_setup.adapters.arena_animation_retarget.retarget import ARM_REST, heading, rest_maps
+from arena_simulation_setup.adapters.arena_animation_retarget.smplx import J, Motion
 
 
 def _euler(m: np.ndarray, seq: str) -> np.ndarray:

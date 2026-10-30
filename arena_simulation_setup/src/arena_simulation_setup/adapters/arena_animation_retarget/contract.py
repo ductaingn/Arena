@@ -26,7 +26,7 @@ def _candidates() -> list[Path]:
         spec = None
     if spec is not None:
         out += [Path(p) / _REL for p in (spec.submodule_search_locations or [])]
-    out.append(Path(__file__).resolve().parents[3] / "task_generator" / "task_generator" / _REL)  # repo checkout
+    out.append(Path(__file__).resolve().parents[5] / "task_generator" / "task_generator" / _REL)  # repo checkout
     return out
 
 

@@ -3,8 +3,8 @@
 import numpy as np
 import torch
 
-from arena_animation_retarget.contract import SK, WIRE
-from arena_animation_retarget.fk_torch import ContractFK
+from arena_simulation_setup.adapters.arena_animation_retarget.contract import SK, WIRE
+from arena_simulation_setup.adapters.arena_animation_retarget.fk_torch import ContractFK
 
 
 def test_matches_contract_fk():

@@ -5,14 +5,14 @@ Retargets SMPL-X body motion onto Arena's 40-DOF human wire, producing clips for
 
 ```bash
 # one clip, or a whole tree of them (directories are searched recursively)
-ros2 run arena_animation_retarget retarget wave.npz -o arena_simulation_setup/assets/Common/Animation --loop
-ros2 run arena_animation_retarget retarget ~/amass/CMU -o $ANIM --name-from-path --prefix amass_ \
+ros2 run arena_simulation_setup animation_retarget wave.npz -o arena_simulation_setup/assets/Common/Animation --loop
+ros2 run arena_simulation_setup animation_retarget ~/amass/CMU -o $ANIM --name-from-path --prefix amass_ \
     --report retarget.csv --skip-existing
-python -m arena_animation_retarget ...      # same, without ros2
+python -m arena_simulation_setup.adapters.arena_animation_retarget ...   # same, without ros2
 ```
 
 ```python
-from arena_animation_retarget import load, retarget, retarget_batch, write_clip
+from arena_simulation_setup.adapters.arena_animation_retarget import load, retarget, retarget_batch, write_clip
 clip = retarget(load("wave.npz"))                       # Motion -> Clip (20 fps)
 clips = retarget_batch([load(f) for f in files])        # one batched IK for all of them
 write_clip(clip, ANIM, "wave_smplx", loop=True)
@@ -79,11 +79,11 @@ The price is individual bone directions, 6–30° from SMPL-X's. That is unavoid
 ## Two-person interactions (`--pair`, `pair.py`)
 
 ```bash
-ros2 run arena_animation_retarget retarget hug.npz shake/ -o $ANIM --pair --prefix intermask_
+ros2 run arena_simulation_setup animation_retarget hug.npz shake/ -o $ANIM --pair --prefix intermask_
 ```
 
 ```python
-from arena_animation_retarget.pair import load_pair, retarget_pairs
+from arena_simulation_setup.adapters.arena_animation_retarget.pair import load_pair, retarget_pairs
 res = retarget_pairs([load_pair("hug.npz")])[0]   # res.clips = (a, b), res.placements, res.contact
 ```
 
@@ -125,7 +125,7 @@ The axes and chain come from `task_generator`'s `pointing/skeleton.py`, which is
 ## Tests
 
 ```bash
-cd utils/arena_animation_retarget && python3 -m pytest tests     # ~2 min; uses the GPU if there is one
+cd arena_simulation_setup && python3 -m pytest tests/unit/animation_retarget   # ~2 min; uses the GPU if there is one
 ```
 
 Coverage:

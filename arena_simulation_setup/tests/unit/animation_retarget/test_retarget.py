@@ -12,12 +12,12 @@ import torch
 import yaml
 from scipy.spatial.transform import Rotation
 
-from arena_animation_retarget import fidelity, load, load_clip, retarget, retarget_batch, write_clip
-from arena_animation_retarget.contract import WIRE
-from arena_animation_retarget.fk_torch import ContractFK
-from arena_animation_retarget.ik import HARD_LIMITS
-from arena_animation_retarget.retarget import prepare, resample
-from arena_animation_retarget.smplx import BODY_TO_ROS, REST_OFFSETS, J, Motion, forward_kinematics, rest_offsets_from_model
+from arena_simulation_setup.adapters.arena_animation_retarget import fidelity, load, load_clip, retarget, retarget_batch, write_clip
+from arena_simulation_setup.adapters.arena_animation_retarget.contract import WIRE
+from arena_simulation_setup.adapters.arena_animation_retarget.fk_torch import ContractFK
+from arena_simulation_setup.adapters.arena_animation_retarget.ik import HARD_LIMITS
+from arena_simulation_setup.adapters.arena_animation_retarget.retarget import prepare, resample
+from arena_simulation_setup.adapters.arena_animation_retarget.smplx import BODY_TO_ROS, REST_OFFSETS, J, Motion, forward_kinematics, rest_offsets_from_model
 
 sys.path.insert(0, str(Path(__file__).parent))
 import reference  # noqa: E402
@@ -240,7 +240,7 @@ def test_write_and_load(tmp_path):
 
 
 def test_cli_batch(tmp_path):
-    from arena_animation_retarget.cli import main
+    from arena_simulation_setup.adapters.arena_animation_retarget.cli import main
 
     src = tmp_path / "src" / "sub"
     src.mkdir(parents=True)
