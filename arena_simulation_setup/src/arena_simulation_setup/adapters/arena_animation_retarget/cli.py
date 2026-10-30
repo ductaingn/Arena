@@ -188,10 +188,10 @@ def main(argv: list[str] | None = None) -> int:
     files = _find_pairs(a.src) if a.pair else _find(a.src)
     if not files:
         raise SystemExit("retarget: no .npz files found")
-    if a.pair:
-        return _run_pairs(a, files, _names(files, a.src, a))
     if (a.name or a.desc) and len(files) > 1:
         raise SystemExit("retarget: --name/--desc need a single SRC file")
+    if a.pair:
+        return _run_pairs(a, files, _names(files, a.src, a))
     names = _names(files, a.src, a)
     todo = [i for i, n in enumerate(names) if not (a.skip_existing and (a.out / n / f"{n}.npz").exists())]
     cfg = None

@@ -113,3 +113,15 @@ def test_cli_pair(tmp_path):
         assert ann["pair"]["partner"] == partner and ann["pair"]["role"] == role
         assert ann["pair"]["separation"] == pytest.approx(SEP, abs=0.02)
     assert "contact_mean" in (tmp_path / "r.csv").read_text()
+
+
+@pytest.mark.parametrize("flag", ["--name", "--desc"])
+def test_cli_pair_single_source_flags_refuse_several_pairs(tmp_path, flag):
+    src = tmp_path / "src"
+    src.mkdir()
+    for name in ("one", "two"):
+        _save_pair(src / f"{name}.npz", _handshake(30))
+    out = tmp_path / "anim"
+    with pytest.raises(SystemExit, match="single SRC"):
+        cli_main([str(src), "-o", str(out), "--pair", flag, "x", "--method", "none", "-q"])
+    assert not out.exists()
