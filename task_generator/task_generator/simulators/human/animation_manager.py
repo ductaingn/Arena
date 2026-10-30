@@ -212,7 +212,12 @@ class AnimationManager:
                 continue
             if name in self.animations:
                 self.logger.warning(f"Animation `{name}` is already cached, overiding...")
-            self.animations[name] = anim = self._from_clip(name, clip, loop_mapping.get(name))
+            try:
+                anim = self._from_clip(name, clip, loop_mapping.get(name))
+            except ValueError as e:
+                self.logger.warning(f"Animation `{name}` rejected: {e}")
+                continue
+            self.animations[name] = anim
             self.logger.info(f"Animation loaded: [{name}]: [{anim.n_frames} frames - {anim.duration}s at {anim.fps}, loop={anim.loop}{', reverse' if anim.reverse else ''}]")
 
     def _from_clip(self, name: str, clip: AnimationClip, loop: bool | None) -> Animation:
@@ -224,15 +229,18 @@ class AnimationManager:
         release: list[dict] = []
         if meta.get("release_from") is not None:
             cut = round(float(meta["release_from"]) * clip.fps)
-            assert 0 < cut < len(frames), f"Animation {name}: release_from {meta['release_from']} outside the clip"
+            if not 0 < cut < len(frames):
+                raise ValueError(f"release_from {meta['release_from']} outside the clip")
             frames, release = frames[:cut], frames[cut:]
         n_frames = len(frames)
         loop_from = round(float(meta.get("loop_from", 0.0)) * clip.fps)
 
         assert n_frames > 0, "Animation does not contain any frames"
         assert not (is_reverse and not is_loop), f"Animation {name} is reverse but does not loop"
-        assert 0 <= loop_from < n_frames, f"Animation {name}: loop_from {meta.get('loop_from')} outside the clip"
-        assert not (is_reverse and loop_from), f"Animation {name} is reverse and has an intro"
+        if not 0 <= loop_from < n_frames:
+            raise ValueError(f"loop_from {meta.get('loop_from')} outside the clip")
+        if is_reverse and loop_from:
+            raise ValueError("reverse with an intro")
 
         cycle = 2 * n_frames - 2 if is_reverse and n_frames > 1 else n_frames
         return Animation(name=name, frames=frames, n_frames=n_frames, duration=cycle / clip.fps, loop=is_loop, fps=clip.fps, loop_from=loop_from, joints=joint_mask(meta.get("joints")), reverse=is_reverse, release=tuple(release))

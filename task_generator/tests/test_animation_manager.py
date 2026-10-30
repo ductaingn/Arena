@@ -362,10 +362,12 @@ def test_annotation_without_window_keeps_the_whole_clip():
     assert anim is not None and anim.n_frames == 12 and anim.loop_from == 0 and anim.release == ()
 
 
-def test_annotation_window_outside_the_clip_is_rejected():
-    m = AnimationManager(logger=StubLogger(), fps=FPS, clips=_OneClip("bad", 12, {"loop": True, "release_from": 5.0}))
-    with pytest.raises(AssertionError, match="release_from"):
-        m.clip("bad")
+@pytest.mark.parametrize("meta", [{"release_from": 5.0}, {"loop_from": 5.0}, {"reverse": True, "loop_from": 0.1}])
+def test_annotation_window_outside_the_clip_is_rejected(meta):
+    logger = StubLogger()
+    m = AnimationManager(logger=logger, fps=FPS, clips=_OneClip("bad", 12, {"loop": True, **meta}))
+    assert m.clip("bad") is None
+    assert any("rejected" in line for line in logger.lines)
 
 
 def tilted_frames(quat: tuple[float, float, float, float], n: int) -> list[dict]:
