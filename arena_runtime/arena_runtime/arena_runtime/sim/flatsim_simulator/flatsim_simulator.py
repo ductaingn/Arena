@@ -10,7 +10,7 @@ import itertools
 import math
 import traceback
 import typing
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 import arena_robots.catalog
 import arena_robots.Robot
@@ -33,7 +33,7 @@ from task_generator.shared import DynamicObstacle, Floor, ModelType, Obstacle, P
 from task_generator.simulators.human import PED_RADIUS
 
 from arena_runtime.sim import BaseSim, SimKwargs, SimLifecycle, SimUnavailable
-from arena_runtime.sim._interface import resolve_obstacle_box, robot_footprint_radius
+from arena_runtime.sim._interface import robot_footprint_radius
 
 from .planar import drive_model
 
@@ -343,10 +343,9 @@ class FlatsimSimulator(BaseSim):
         if poly is None:
             self._logger.warning(f'obstacle {obstacle.name!r} has no annotated footprint, not spawned')
             return None
-        box = await resolve_obstacle_box(obstacle)
-        height = box[0][2] if box is not None else _OBSTACLE_HEIGHT
         z = obstacle.pose.position.z
-        return _outline(key, [_ring(poly.exterior), *map(_ring, poly.interiors)], (z, z + height))
+        span = await obstacle.span() or (z, z + _OBSTACLE_HEIGHT)
+        return _outline(key, [_ring(poly.exterior), *map(_ring, poly.interiors)], span)
 
     async def _send_outlines(self, outlines: Sequence[Outline]) -> bool:
         if not outlines:
@@ -408,7 +407,7 @@ class FlatsimSimulator(BaseSim):
         for wall_segments, wall_obstacles in await asyncio.gather(*(wall.assets() for wall in walls)):
             for segment in wall_segments:
                 name = self._name(self._realizer.realize(f'wall_{next(self._wall_counter)}'))
-                outlines.append(_outline(name, [_segment_ring(segment)], (segment.start.z, segment.start.z + segment.height)))
+                outlines.append(_outline(name, [_segment_ring(segment)], (min(segment.start.z, segment.end.z), max(segment.start.z, segment.end.z) + segment.height)))
             for obstacle in wall_obstacles:
                 embedded.append((self._name(self._realizer.realize(f'obstacle_{next(self._wall_counter)}')), obstacle))
 
@@ -431,8 +430,8 @@ class FlatsimSimulator(BaseSim):
         await self._remove(names)
         return True
 
-    async def spawn_box(self, name: str, size: tuple[float, float, float], pose: Pose, material: MaterialIdentifier | None = None) -> bool:
-        del material
+    async def spawn_box(self, name: str, size: tuple[float, float, float], pose: Pose, material: MaterialIdentifier | None = None, *, velocity: tuple[float, float, float] | None = None, comb: bool = False) -> bool:
+        del material, velocity, comb
         z_min, z_max = _box_extent(pose, size[2])
         box = Box(name=self._name(name), size_x=size[0], size_y=size[1], x=pose.position.x, y=pose.position.y, yaw=pose.orientation.to_yaw(), z_min=z_min, z_max=z_max)
         response = _answer(await self._spawn_boxes.call_timeout(SpawnBoxes.Request(boxes=[box])))
@@ -440,14 +439,29 @@ class FlatsimSimulator(BaseSim):
             self._box_sizes[name] = size
         return response.success
 
-    async def move_box(self, name: str, pose: Pose) -> bool:
+    def _box_pose(self, name: str, pose: Pose) -> EntityPose | None:
         size = self._box_sizes.get(name)
         if size is None:
-            return False
+            return None
         z_min, z_max = _box_extent(pose, size[2])
-        placed = EntityPose(name=self._name(name), x=pose.position.x, y=pose.position.y, yaw=pose.orientation.to_yaw(), z_min=z_min, z_max=z_max)
+        return EntityPose(name=self._name(name), x=pose.position.x, y=pose.position.y, yaw=pose.orientation.to_yaw(), z_min=z_min, z_max=z_max)
+
+    async def move_box(self, name: str, pose: Pose) -> bool:
+        placed = self._box_pose(name, pose)
+        if placed is None:
+            return False
         self._poses.publish(EntityPoses(poses=[placed]))
         return True
+
+    async def move_boxes(self, poses: Mapping[str, Pose]) -> bool:
+        placed = [entity for name, pose in poses.items() if (entity := self._box_pose(name, pose)) is not None]
+        if placed:
+            self._poses.publish(EntityPoses(poses=placed))
+        return len(placed) == len(poses)
+
+    async def set_box_velocities(self, velocities: Mapping[str, tuple[float, float, float]]) -> bool:
+        """Box2D boxes follow move_boxes alone."""
+        return all(name in self._box_sizes for name in velocities)
 
     async def delete_box(self, name: str) -> bool:
         self._box_sizes.pop(name, None)

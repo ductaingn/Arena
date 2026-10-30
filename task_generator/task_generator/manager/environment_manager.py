@@ -10,7 +10,8 @@ import shapely
 from arena_runtime._node import NodeInterface
 from arena_runtime.sim import BaseSim
 from arena_runtime.sim._semantics import _SEMANTIC_KINDS
-from arena_simulation_setup.shared import Ceiling, Light
+from arena_simulation_setup.shared import Ceiling, Light, Placement, Stairs
+from arena_simulation_setup.shared.navmesh import NavLevel, nav_floors, nav_walls
 from arena_simulation_setup.tree.World import Level, World, entity_lights
 from arena_simulation_setup.tree.World.model import render_door_polygons, render_elevator_polygons
 from arena_simulation_setup.tree.World.Scenario import TimelineEntry
@@ -138,6 +139,7 @@ class EnvironmentManager(NodeInterface):
     _realizer: Realizer
 
     _collision_grid: CollisionGrid | None
+    _nav_levels: tuple[NavLevel, ...]
     _static_polygons: dict[str, shapely.Polygon]
     _affordances: dict[str, tuple[str, Pose, list[AffordanceSlot]]]
 
@@ -156,6 +158,7 @@ class EnvironmentManager(NodeInterface):
         self._realizer = realizer
 
         self._collision_grid = None
+        self._nav_levels = ()
         self._static_polygons = {}
         self._affordances = {}
         self._affordance_markers_pub = self.node.create_publisher(
@@ -178,6 +181,15 @@ class EnvironmentManager(NodeInterface):
             self._stage_ambient_pub = self.node.create_publisher(String, STAGE_AMBIENT_TOPIC, qos)
         else:
             self._stage_ambient_sub = self.node.create_subscription(String, STAGE_AMBIENT_TOPIC, self._on_stage_ambient, qos)
+
+    @property
+    def stacks_levels(self) -> bool:
+        """Whether the simulator can place levels above one another."""
+        return self._simulator.STACKS_LEVELS
+
+    @property
+    def simulator_name(self) -> str:
+        return self._simulator.SIM_NAME
 
     @property
     def _env_name(self) -> str:
@@ -231,6 +243,15 @@ class EnvironmentManager(NodeInterface):
 
     def ezilear(self, target: Pose) -> Pose:
         return self._realizer.ezilear(target)
+
+    def placement(self) -> Placement:
+        """The map from the abstract frame into the simulator frame for this env."""
+        return self._realizer.placement()
+
+    @property
+    def nav_levels(self) -> tuple[NavLevel, ...]:
+        """Floors, blocking walls, stair halves and doors under their authored names of every level of the spawned world, in the simulator frame."""
+        return self._nav_levels
 
     @property
     def collision_grid(self) -> CollisionGrid | None:
@@ -403,9 +424,35 @@ class EnvironmentManager(NodeInterface):
             if realized_sig.semantics:
                 pending.append(("signal", realized_sig.name, list(realized_sig.semantics), None))
         elevators = tuple(elevators_list)
+        stairs_list: list[Stairs] = []
+        level_stairs: dict[str, list[Stairs]] = {}
+        for fid, level in _world.levels.items():
+            if not _match_level_id(fid):
+                continue
+            level_stairs[fid] = []
+            for stair in level.stairs:
+                realized_f = self._realizer.realize(stair, fid)
+                self.node._register_semantic_entity(stair.name, realized_f.name)
+                stairs_list.append(realized_f)
+                level_stairs[fid].append(realized_f)
+        stairs = tuple(stairs_list)
+        self._nav_levels = tuple(
+            NavLevel(
+                level=str(fid),
+                floors=tuple(self._realizer.place(self._realizer.realize(f, fid), fid) for f in nav_floors(level)),
+                walls=tuple(self._realizer.place(self._realizer.realize(w, fid), fid) for w in nav_walls(level)),
+                stairs=tuple(self._realizer.place(stair, fid) for stair in level_stairs[fid]),
+                doors=tuple(self._realizer.place(attrs.evolve(self._realizer.realize(d, fid), name=d.name), fid) for d in level.all_doors),
+            )
+            for fid, level in _world.levels.items()
+            if _match_level_id(fid)
+        )
+        self._human_simulator.spawn_stairs(stairs)
         statics = tuple(self._realizer.realize(s, fid) for fid, level in _world.levels.items() if _match_level_id(fid) for s in level.all_static_entities)
         if self._skip_obstacles:
             statics = ()
+        for static in statics:
+            self.node._register_semantic_entity(static.name.removeprefix(WORLD_ENTITY_PREFIX), self._realizer.prefix(static.name))
 
         if world_map is not None:
             cutouts = [p for d in doors for p in render_door_polygons(d)] + [p for e in elevators for p in render_elevator_polygons(e)]
@@ -424,6 +471,8 @@ class EnvironmentManager(NodeInterface):
             futures.append(self._simulator.spawn_walls(lintels, clear_existing=False))
         futures.append(self._human_simulator.spawn_obstacles(statics, layer=ObstacleLayer.WORLD))
         futures.append(self._spawn_elevators(elevators))
+        if stairs:
+            futures.append(self._simulator.spawn_stairs(stairs))
 
         await asyncio.gather(*futures)
         if lights:
@@ -459,6 +508,9 @@ class EnvironmentManager(NodeInterface):
         if self._skip_obstacles:
             return
         realized = tuple(self._realizer.realize(obstacle, obstacle.level) for obstacle in setups)
+        for obstacle in realized:
+            if not obstacle.name.startswith(WORLD_ENTITY_PREFIX):
+                self.node._register_semantic_entity(obstacle.name, self._realizer.prefix(obstacle.name))
         await self._cache_polygons(realized)
         await self._human_simulator.spawn_obstacles(realized)
         await self._spawn_episode_lights(setups)

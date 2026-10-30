@@ -1094,10 +1094,12 @@ class _Mech:
         self._door_runtime: dict[str, _DoorRuntime] = {}
         self._elevator_runtime: dict[str, _ElevatorRuntime] = {}
         self._elevator_doors: dict[str, str] = {}
+        self._stair_runtime: dict = {}
         self._robots: dict[str, tuple[float, float]] = {}
         self._lights: dict[str, Light] = {}
         self._light_outputs: dict[str, tuple[float, float]] = {}
         self._light_poses: dict[str, tuple[Position, float]] = {}
+        self._articulated: dict = {}
         self._semantics = SemanticsManager(self)
 
     def robot_discs(self) -> list[tuple[str, tuple[float, float], float]]:
