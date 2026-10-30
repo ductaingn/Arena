@@ -18,7 +18,7 @@ import numpy as np
 
 from . import contract as C
 from . import skeleton as S
-from .generator import FIXED_POINT_DAMPING, HoldPose, PointAtClip, PointAtGenerator, PointAtOptions, _triple_in_limits, angles_from_direction, template_asset
+from .generator import DEFAULT_TEMPLATE, FIXED_POINT_DAMPING, HoldPose, PointAtClip, PointAtGenerator, PointAtOptions, _triple_in_limits, angles_from_direction, template_asset
 
 SIDES = ("l", "r")
 AZ_STEP = 5.0
@@ -207,7 +207,7 @@ def _solve_cell(template: str, height: float, collar_scale: float, side: str, az
 
 
 def bake(
-    template: str = "point_to_right",
+    template: str = DEFAULT_TEMPLATE,
     height: float = 1.65,
     *,
     collar_scale: float = COLLAR_SCALE,
@@ -281,7 +281,7 @@ def bake(
 class BakedPointAt(PointAtGenerator):
     """``PointAtGenerator`` whose clips come from the baked table instead of the solver."""
 
-    def __init__(self, template: str = "point_to_right", height: float = 1.65, options: PointAtOptions | None = None, table: PointTable | None = None) -> None:
+    def __init__(self, template: str = DEFAULT_TEMPLATE, height: float = 1.65, options: PointAtOptions | None = None, table: PointTable | None = None) -> None:
         table = table or PointTable(table_path(template))
         options = options or PointAtOptions(collar_scale=table.collar_scale)
         super().__init__(template=template, height=height, options=options)
@@ -449,7 +449,7 @@ class BakedPointAt(PointAtGenerator):
 
 def main(argv: Sequence[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="bake the PointAt hold table")
-    ap.add_argument("--template", default="point_to_right")
+    ap.add_argument("--template", default=DEFAULT_TEMPLATE)
     ap.add_argument("--height", type=float, default=1.65)
     ap.add_argument("--collar-scale", type=float, default=COLLAR_SCALE)
     ap.add_argument("--workers", type=int, default=None)

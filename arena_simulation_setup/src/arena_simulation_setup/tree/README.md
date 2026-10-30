@@ -116,7 +116,7 @@ A pedestrian animation clip: `<domain>/Animation/<name>/` holds `annotation.yaml
 mask, provenance note; it is also the bucket's listing sentinel) and `<name>.npz` (`joint_names (J,)`,
 `angles (T, J)`, `t`, `root_xy_yaw`, `animation_state`, loaded with `allow_pickle=False`). Derived files sit
 next to the clip and are reached through `AnimationView.extra(filename)` (the pointing table is
-`point_to_right/table.npz`). `.load()` returns an `AnimationView`: `.meta` is the annotation, `.clip` an
+`point_at_template/table.npz`). `.load()` returns an `AnimationView`: `.meta` is the annotation, `.clip` an
 `AnimationClip` whose `.frames()` gives the per-frame dicts the players consume. `write_clip(directory, frames, meta)`
 writes one. Clips never ship in the repo: both local asset dirs gitignore `*/Animation/`.
 

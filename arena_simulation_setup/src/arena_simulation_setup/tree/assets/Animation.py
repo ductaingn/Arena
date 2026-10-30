@@ -32,6 +32,7 @@ class AnimationClip:
     root_xy_yaw: np.ndarray  # (T, 3)
     animation_state: np.ndarray  # (T,) Pedestrian.msg state
     meta: dict
+    root_quat: np.ndarray | None = None  # (T, 4) xyzw pelvis orientation from the start heading, clips annotated pelvis_tilt
 
     @property
     def fps(self) -> float:
@@ -45,9 +46,22 @@ class AnimationClip:
                 'angles': {**dict.fromkeys(joints, 0.0), **dict(zip(self.joint_names, self.angles[k].tolist(), strict=True))},
                 'root_xy_yaw': self.root_xy_yaw[k].tolist(),
                 'animation_state': int(self.animation_state[k]),
+                **({'root_quat': self.root_quat[k].tolist()} if self.root_quat is not None else {}),
             }
             for k in range(len(self.t))
         ]
+
+
+def from_start_heading(root_quat: np.ndarray, yaw: np.ndarray) -> np.ndarray:
+    """Pelvis orientations (T, 4 xyzw) given in each frame's heading frame, turned into the first frame's.
+
+    A lying pelvis has no clear heading, so the per-frame heading can jump; the orientation it leaves is smooth.
+    """
+    half = 0.5 * (np.asarray(yaw, dtype=float) - float(yaw[0]))
+    s, c = np.sin(half), np.cos(half)  # yaw quaternion (0, 0, s, c)
+    x, y, z, w = np.asarray(root_quat, dtype=float).T
+    q = np.stack([c * x - s * y, c * y + s * x, c * z + s * w, c * w - s * z], axis=1)
+    return q
 
 
 class AnimationView(PathView):
@@ -59,7 +73,10 @@ class AnimationView(PathView):
 
     @cached_property
     def clip(self) -> AnimationClip:
+        """The clip; its root_quat only when the annotation says the body is pelvis-relative (pelvis_tilt), as clips
+        that fold the tilt into the waist and hips carry one too."""
         with np.load(self.path / f'{self.path.name}.npz', allow_pickle=False) as z:
+            tilted = bool(self.meta.get('pelvis_tilt')) and 'root_quat' in z.files
             return AnimationClip(
                 name=self.path.name,
                 joint_names=tuple(str(j) for j in z['joint_names']),
@@ -68,6 +85,7 @@ class AnimationView(PathView):
                 root_xy_yaw=z['root_xy_yaw'],
                 animation_state=z['animation_state'],
                 meta=self.meta,
+                root_quat=from_start_heading(z['root_quat'], z['root_xy_yaw'][:, 2]) if tilted else None,
             )
 
     def extra(self, filename: str) -> Path:
@@ -90,16 +108,21 @@ def write_clip(directory: Path, frames: Sequence[dict], meta: dict) -> Path:
     """Write per-frame dicts (the players' shape) as an Animation asset at directory/, named after it."""
     name = directory.name
     joint_names = sorted({j for f in frames for j in f['angles']})
+    tilted = any('root_quat' in f for f in frames)
+    root_xy_yaw = np.array([f.get('root_xy_yaw', (0.0, 0.0, 0.0)) for f in frames], dtype=np.float64).reshape(len(frames), 3)
     directory.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         directory / f'{name}.npz',
+        allow_pickle=False,
         joint_names=np.array(joint_names),
         angles=np.array([[f['angles'].get(j, 0.0) for j in joint_names] for f in frames], dtype=np.float64),
         t=np.array([f.get('t', k / meta.get('fps', 20.0)) for k, f in enumerate(frames)], dtype=np.float64),
-        root_xy_yaw=np.array([f.get('root_xy_yaw', (0.0, 0.0, 0.0)) for f in frames], dtype=np.float64).reshape(len(frames), 3),
+        root_xy_yaw=root_xy_yaw,
         animation_state=np.array([f.get('animation_state', 0) for f in frames], dtype=np.int16),
+        # stored per frame heading, as the retarget writes it: the inverse of the loader's turn
+        **({'root_quat': from_start_heading(np.array([f.get('root_quat', (0.0, 0.0, 0.0, 1.0)) for f in frames], dtype=np.float64), -root_xy_yaw[:, 2])} if tilted else {}),
     )
-    (directory / ANNOTATION).write_text(yaml.safe_dump({'name': name, 'path': f'Animation/{name}', **meta}, sort_keys=False))
+    (directory / ANNOTATION).write_text(yaml.safe_dump({'name': name, 'path': f'Animation/{name}', **meta, **({'pelvis_tilt': True} if tilted else {})}, sort_keys=False))
     return directory
 
 

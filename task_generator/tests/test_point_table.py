@@ -11,7 +11,7 @@ from task_generator.simulators.human.pointing import contract as C
 from task_generator.simulators.human.pointing import skeleton as S
 from task_generator.simulators.human.pointing.table import COLLAR_SCALE, anchor_index, table_path
 
-pytestmark = pytest.mark.clips("point_to_right")
+pytestmark = pytest.mark.clips("point_at_template")
 
 
 @pytest.fixture(scope="module")
@@ -39,10 +39,10 @@ def max_step(clip) -> float:
 
 
 def test_table_ships_for_the_default_template():
-    path = table_path("point_to_right")
+    path = table_path("point_at_template")
     assert os.path.exists(path), f"bake it: python3 -m task_generator.simulators.human.pointing.table ({path})"
     t = PointTable(path)
-    assert t.template == "point_to_right" and t.height == pytest.approx(1.65) and t.collar_scale == COLLAR_SCALE
+    assert t.template == "point_at_template" and t.height == pytest.approx(1.65) and t.collar_scale == COLLAR_SCALE
     assert t.az[0] == -180.0 and t.az[-1] == 180.0
     assert t.ok[:, :, :].mean() > 0.5
     # the wrapped column is the first column
