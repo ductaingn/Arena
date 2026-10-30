@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -237,6 +238,11 @@ def test_write_and_load(tmp_path):
     assert ann["fps"] == pytest.approx(20.0) and ann["tags"] == ["domain::care"]
     back = load_clip(d)
     assert all(np.allclose(back.angles[k], clip.angles[k]) for k in WIRE)
+
+
+def test_cli_help_does_not_import_torch():
+    code = "import sys\nfrom arena_simulation_setup.adapters.arena_animation_retarget.cli import _parser\n_parser().format_help()\nsys.exit('torch' in sys.modules)"
+    assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
 
 
 def test_cli_batch(tmp_path):

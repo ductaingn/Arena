@@ -27,7 +27,6 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-from . import fidelity
 from .clip import write_clip
 from .retarget import Prepared, prepare, resample
 from .smplx import load
@@ -192,7 +191,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     a = _parser().parse_args(argv)
-    from . import ik  # torch import after argument parsing: --help stays fast
+    from . import fidelity, ik  # torch import after argument parsing: --help stays fast
 
     files = _find_pairs(a.src) if a.pair else _find(a.src)
     if not files:
