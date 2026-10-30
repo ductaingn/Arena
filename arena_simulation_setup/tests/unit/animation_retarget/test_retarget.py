@@ -107,6 +107,21 @@ def test_formats_agree(tmp_path):
     assert np.allclose(a.rest_offsets, REST_OFFSETS, atol=1e-5)  # measured from the clip
 
 
+def test_load_reads_past_a_pickled_array_it_never_touches(tmp_path):
+    L, root = _locals(10, 0), _root(10)
+    path = tmp_path / "rot.npz"
+    G, P = forward_kinematics(L, root)
+    np.savez(path, global_rot_mats=G, posed_joints=P, gender=np.array([{"a": 1}], dtype=object))
+    assert len(load(path)) == 10
+
+
+def test_load_refuses_a_pickled_motion(tmp_path):
+    path = tmp_path / "rot.npz"
+    np.savez(path, poses=np.array([{"a": 1}], dtype=object))
+    with pytest.raises(ValueError, match="allow_pickle"):
+        load(path)
+
+
 def test_model_rest_skeleton(tmp_path):
     """A model file's J_regressor/v_template/shapedirs give the rest offsets of its shape."""
     joints = np.cumsum(np.r_[[np.zeros(3)], REST_OFFSETS[1:]], 0)  # any 22 points will do

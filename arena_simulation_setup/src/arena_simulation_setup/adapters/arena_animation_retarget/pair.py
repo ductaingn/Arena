@@ -104,7 +104,7 @@ def is_pair_file(path: str | Path) -> bool:
     p = Path(path)
     if p.is_dir():
         return (p / "P1.npz").is_file() and (p / "P2.npz").is_file()
-    with np.load(p, allow_pickle=True) as z:
+    with np.load(p) as z:
         return any(k.startswith("p0_") for k in z.files) and any(k.startswith("p1_") for k in z.files)
 
 

@@ -133,14 +133,15 @@ class _Keys:
     """An npz's arrays with one person's key prefix stripped (``p0_trans`` -> ``trans``); shared keys stay visible."""
 
     def __init__(self, z: np.lib.npyio.NpzFile, prefix: str) -> None:
-        self._d = {k: z[k] for k in z.files if not k.startswith(PERSON_PREFIXES)}
-        self._d.update({k[len(prefix) :]: z[k] for k in z.files if k.startswith(prefix)})
+        self._z = z
+        self._keys = {k: k for k in z.files if not k.startswith(PERSON_PREFIXES)}
+        self._keys.update({k[len(prefix) :]: k for k in z.files if k.startswith(prefix)})
         if not any(k.startswith(prefix) for k in z.files):
             raise ValueError(f"no keys with prefix {prefix!r} (keys: {', '.join(z.files)})")
-        self.files = list(self._d)
+        self.files = list(self._keys)
 
     def __getitem__(self, k: str) -> np.ndarray:
-        return self._d[k]
+        return self._z[self._keys[k]]
 
 
 NpzLike = np.lib.npyio.NpzFile | _Keys  # a loaded npz, or one person's view of it
@@ -158,7 +159,7 @@ def load(path: str | Path, up: str = "auto", fps: float | None = None, model: st
     ``person``: read one person of a two-person file, whose arrays carry a ``p0_`` / ``p1_`` key prefix (the
     InterMask export, see :mod:`.pair`).
     """
-    z = np.load(path, allow_pickle=True)
+    z = np.load(path)
     if person is not None:
         z = _Keys(z, PERSON_PREFIXES[person])
     if up == "auto" and "up" in z.files:  # a file may name its own world up axis
