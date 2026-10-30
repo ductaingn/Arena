@@ -328,14 +328,14 @@ def test_a_reverse_clip_must_loop(mgr):
 class _OneClip:
     """A clip source holding one in-memory clip."""
 
-    def __init__(self, name: str, n: int, meta: dict) -> None:
+    def __init__(self, name: str, n: int, meta: dict, legacy: bool = False) -> None:
         import numpy as np
 
         from arena_simulation_setup.tree.assets.Animation import AnimationClip
 
         angles = np.zeros((n, 1))
         angles[:, 0] = np.arange(n) * 0.1  # l_elbow ramps 0.1 rad per frame
-        self.clip = AnimationClip(name=name, joint_names=("l_elbow",), angles=angles, t=np.arange(n) / FPS, root_xy_yaw=np.zeros((n, 3)), animation_state=np.zeros(n, dtype=int), meta={"fps": FPS, **meta})
+        self.clip = AnimationClip(name=name, joint_names=("l_elbow",), angles=angles, t=np.arange(n) / FPS, root_xy_yaw=np.zeros((n, 3)), animation_state=np.zeros(n, dtype=int), meta={"fps": FPS, **meta}, legacy=legacy)
 
     def names(self) -> list[str]:
         return [self.clip.name]
@@ -368,6 +368,21 @@ def test_annotation_window_outside_the_clip_is_rejected(meta):
     m = AnimationManager(logger=logger, fps=FPS, clips=_OneClip("bad", 12, {"loop": True, **meta}))
     assert m.clip("bad") is None
     assert any("rejected" in line for line in logger.lines)
+
+
+def test_clips_from_old_data_warn_once_with_their_names():
+    logger = StubLogger()
+    m = AnimationManager(logger=logger, fps=FPS, clips=_OneClip("stale", 12, {"loop": True}, legacy=True))
+    assert m.clip("stale") is not None
+    warned = [line for line in logger.lines if "old .npz data" in line]
+    assert len(warned) == 1 and "stale" in warned[0]
+
+
+def test_anim_clips_load_without_the_old_data_warning():
+    logger = StubLogger()
+    m = AnimationManager(logger=logger, fps=FPS, clips=_OneClip("fresh", 12, {"loop": True}))
+    assert m.clip("fresh") is not None
+    assert not [line for line in logger.lines if "old .npz data" in line]
 
 
 def tilted_frames(quat: tuple[float, float, float, float], n: int) -> list[dict]:

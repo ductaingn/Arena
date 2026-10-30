@@ -244,10 +244,10 @@ def test_write_and_load(tmp_path):
     m = load_motion(_locals(45, 5), _root(45))
     clip = retarget(m)
     d = write_clip(clip, tmp_path, "smplx_test", loop=True, tags=["domain::care"], note="synthetic.")
-    z = np.load(d / "smplx_test.npz")
-    assert sorted(str(n) for n in z["joint_names"]) == sorted(WIRE) and len(WIRE) == 40
-    assert z["angles"].shape == (len(clip.t), 40) and z["root_xy_yaw"].shape == (len(clip.t), 3)
-    assert z["root_quat"].shape == (len(clip.t), 4)
+    z = np.load(d / "smplx_test.anim")
+    assert sorted(str(n) for n in z["clip/joint_names"]) == sorted(WIRE) and len(WIRE) == 40
+    assert z["clip/angles"].shape == (len(clip.t), 40) and z["clip/root_xy_yaw"].shape == (len(clip.t), 3)
+    assert z["root/quat"].shape == (len(clip.t), 4)
     ann = yaml.safe_load((d / "annotation.yaml").read_text())
     assert ann["name"] == "smplx_test" and ann["path"] == "Animation/smplx_test" and ann["loop"] is True
     assert ann["fps"] == pytest.approx(20.0) and ann["tags"] == ["domain::care"]
@@ -271,7 +271,7 @@ def test_cli_batch(tmp_path):
     out, rep = tmp_path / "out", tmp_path / "report.csv"
     rc = main([str(tmp_path / "src"), "-o", str(out), "--jobs", "2", "--report", str(rep), "-q"])
     assert rc == 1  # shape.npz failed
-    assert (out / "a" / "a.npz").exists() and (out / "b" / "b.npz").exists()
+    assert (out / "a" / "a.anim").exists() and (out / "b" / "b.anim").exists()
     lines = rep.read_text().splitlines()
     assert len(lines) == 3 and "l_arm_reach_mean" in lines[0]
     assert main([str(src / "a.npz"), "-o", str(out), "--skip-existing", "-q"]) == 0

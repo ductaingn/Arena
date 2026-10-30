@@ -2,7 +2,7 @@
 
     ros2 run arena_simulation_setup animation_retarget SRC [SRC ...] -o OUT_DIR [options]
 
-SRC: .npz files and/or directories (searched recursively for *.npz). Each motion becomes OUT_DIR/<name>/<name>.npz +
+SRC: .npz files and/or directories (searched recursively for *.npz). Each motion becomes OUT_DIR/<name>/<name>.anim +
 annotation.yaml, name = file stem (--name-from-path for path-based names when stems repeat). Point OUT_DIR at
 arena_simulation_setup/assets/Common/Animation to play the clips in Arena right away.
 
@@ -98,7 +98,7 @@ def _run_pairs(a: argparse.Namespace, files: list[Path], names: list[str]) -> in
     cfg = None if a.method == "none" else ik.IKConfig.preset(a.method)
     if cfg is not None and a.iters:
         cfg = cfg.with_(iters=a.iters)
-    todo = [i for i, n in enumerate(names) if not (a.skip_existing and (a.out / f"{n}_a" / f"{n}_a.npz").exists())]
+    todo = [i for i, n in enumerate(names) if not (a.skip_existing and (a.out / f"{n}_a" / f"{n}_a.anim").exists())]
     say(f"retarget: {len(todo)} of {len(files)} pairs, method {a.method}, window {a.window}, {a.passes} contact passes")
     pairs, ok, failed, rows, t0 = [], [], [], [], time.time()
     for i in todo:
@@ -164,7 +164,7 @@ def _parser() -> argparse.ArgumentParser:
     g.add_argument("--desc", help="annotation description (single SRC only; default: the name)")
     g.add_argument("--tag", action="append", dest="tags", help="annotation tag, repeatable (default: domain::common)")
     g.add_argument("--note", default="", help="free text for the annotation note")
-    g.add_argument("--skip-existing", action="store_true", help="skip clips whose output npz exists")
+    g.add_argument("--skip-existing", action="store_true", help="skip clips whose output .anim exists")
     g = ap.add_argument_group("source")
     g.add_argument("--fps-in", type=float, help="source rate, if a file has none (default 30)")
     g.add_argument("--up", choices=("auto", "y", "z"), default="auto", help="source world up axis (auto: y for Kimodo-style rotations, z for AMASS-style parameters)")
@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.pair:
         return _run_pairs(a, files, _names(files, a.src, a))
     names = _names(files, a.src, a)
-    todo = [i for i, n in enumerate(names) if not (a.skip_existing and (a.out / n / f"{n}.npz").exists())]
+    todo = [i for i, n in enumerate(names) if not (a.skip_existing and (a.out / n / f"{n}.anim").exists())]
     cfg = None
     if a.method != "none":
         cfg = ik.IKConfig.preset(a.method)

@@ -206,6 +206,7 @@ class AnimationManager:
             self.animations[name] = Animation(name=name, frames=[], n_frames=0, duration=0.0, loop=True, fps=self._fps)
 
         names = self._clips.names() if animation_name is None else list(animation_name)
+        legacy: list[str] = []
         for name, clip in self._clips.load(names).items():
             if isinstance(clip, Exception):
                 self.logger.warning(f"Animation `{name}` could not be loaded: {clip}")
@@ -218,7 +219,11 @@ class AnimationManager:
                 self.logger.warning(f"Animation `{name}` rejected: {e}")
                 continue
             self.animations[name] = anim
+            if clip.legacy:
+                legacy.append(name)
             self.logger.info(f"Animation loaded: [{name}]: [{anim.n_frames} frames - {anim.duration}s at {anim.fps}, loop={anim.loop}{', reverse' if anim.reverse else ''}]")
+        if legacy:
+            self.logger.warning(f"{len(legacy)} clip(s) play old .npz data, run `arena asset expire` to refresh them: {', '.join(sorted(legacy))}")
 
     def _from_clip(self, name: str, clip: AnimationClip, loop: bool | None) -> Animation:
         """A canned clip; ``loop_from`` (s) makes the frames before it an intro played once, ``release_from`` (s) cuts the frames from it off as the release, played when the gesture ends."""

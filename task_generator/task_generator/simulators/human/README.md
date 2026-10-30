@@ -188,8 +188,8 @@ under `$ARENA_ASSETS_DIR/<bucket>/`). Both local dirs gitignore `*/Animation/`.
 Common/Animation/<name>/
   annotation.yaml   fps, loop, reverse, loop_from, release_from, joints (a JOINT_GROUPS name from clips.py or a list;
                     omitted = whole body), pair, note
-  <name>.npz        joint_names (J,), angles (T, J), t (T,), root_xy_yaw (T, 3), animation_state (T,)
-  table.npz         point_at_template only: the baked pointing table (pointing/table.py)
+  <name>.anim       the clip's arrays, settings over the annotation, and for point_at_template the baked pointing
+                    table (pointing/table.py), format in the tree README
 ```
 
 A looping clip's `loop_from` (s) makes the frames before it an intro that plays once, the loop wraps back to it.

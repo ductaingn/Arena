@@ -108,7 +108,7 @@ def test_cli_pair(tmp_path):
     assert cli_main([str(src), "-o", str(out), "--pair", "--prefix", "t_", "--report", str(tmp_path / "r.csv"), "-q"]) == 0
     for role, partner in (("a", "t_shake_b"), ("b", "t_shake_a")):
         d = out / f"t_shake_{role}"
-        assert (d / f"t_shake_{role}.npz").exists()
+        assert (d / f"t_shake_{role}.anim").exists()
         ann = yaml.safe_load((d / "annotation.yaml").read_text())
         assert ann["pair"]["partner"] == partner and ann["pair"]["role"] == role
         assert ann["pair"]["separation"] == pytest.approx(SEP, abs=0.02)
@@ -148,7 +148,7 @@ def test_cli_pair_directory_as_source_takes_its_own_name_from_path(tmp_path):
         np.savez(d / f"P{i + 1}.npz", root_orient=aa[:, 0], pose_body=aa[:, 1:].reshape(len(L), 63), trans=root)
     out = tmp_path / "anim"
     assert cli_main([str(d), "-o", str(out), "--pair", "--name-from-path", "--method", "none", "-q"]) == 0
-    assert (out / "G001_a" / "G001_a.npz").exists()
+    assert (out / "G001_a" / "G001_a.anim").exists()
 
 
 @pytest.mark.parametrize("flag", ["--no-fold", "--check", "--no-score"])
@@ -172,5 +172,5 @@ def test_cli_pair_too_short_for_the_window_fails_alone(tmp_path):
     _save_pair(src / "short.npz", _handshake(30))
     out = tmp_path / "anim"
     assert cli_main([str(src), "-o", str(out), "--pair", "--window", "40:60", "--method", "none", "-q"]) == 1
-    assert (out / "long_a" / "long_a.npz").exists()
+    assert (out / "long_a" / "long_a.anim").exists()
     assert not (out / "short_a").exists()

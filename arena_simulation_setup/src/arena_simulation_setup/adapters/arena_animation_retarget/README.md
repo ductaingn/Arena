@@ -18,9 +18,9 @@ clips = retarget_batch([load(f) for f in files])        # one batched IK for all
 write_clip(clip, ANIM, "wave_smplx", loop=True)
 ```
 
-Each source becomes `<out>/<name>/<name>.npz` plus `annotation.yaml`. The npz holds the keys Arena's loader reads (`joint_names`, `angles`, `t`, `root_xy_yaw`, `animation_state`), plus `root_z` and `root_quat`: the pelvis height and orientation.
+Each source becomes `<out>/<name>/<name>.anim` plus `annotation.yaml`. The `clip` group holds what Arena's loader reads (`joint_names`, `angles`, `t`, `root_xy_yaw`, `animation_state`), the `root` group `z` and `quat`: the pelvis height and orientation.
 
-The wire has no pelvis-tilt joint. By default the tilt is folded into the waist and hips, so the body keeps its shape on an upright root. That works for bending and kneeling, but a body lying on the ground needs its hips turned past their range and the skin twists. With `--no-fold` the body stays pelvis-relative and the annotation gets `pelvis_tilt: true`: Arena's player then tilts the whole ped by `root_quat`, its pelvis over the agent's position and its lowest point on the floor. Use it for falls and lying clips.
+The wire has no pelvis-tilt joint. By default the tilt is folded into the waist and hips, so the body keeps its shape on an upright root. That works for bending and kneeling, but a body lying on the ground needs its hips turned past their range and the skin twists. With `--no-fold` the body stays pelvis-relative and the annotation gets `pelvis_tilt: true`: Arena's player then tilts the whole ped by `root/quat`, its pelvis over the agent's position and its lowest point on the floor. Use it for falls and lying clips.
 
 ## Batch processing and GPU
 
