@@ -140,6 +140,17 @@ def test_window_outside_the_clip_holds_no_frames():
         window(m0, m1, (500, 900))
 
 
+def test_cli_pair_directory_as_source_takes_its_own_name_from_path(tmp_path):
+    d = tmp_path / "G001"
+    d.mkdir()
+    for i, (L, root) in enumerate(_handshake(30)):
+        aa = Rotation.from_matrix(L.reshape(-1, 3, 3)).as_rotvec().reshape(len(L), 22, 3)
+        np.savez(d / f"P{i + 1}.npz", root_orient=aa[:, 0], pose_body=aa[:, 1:].reshape(len(L), 63), trans=root)
+    out = tmp_path / "anim"
+    assert cli_main([str(d), "-o", str(out), "--pair", "--name-from-path", "--method", "none", "-q"]) == 0
+    assert (out / "G001_a" / "G001_a.npz").exists()
+
+
 def test_cli_pair_too_short_for_the_window_fails_alone(tmp_path):
     src = tmp_path / "src"
     src.mkdir()

@@ -59,7 +59,7 @@ def _names(files: list[Path], srcs: list[Path], a: argparse.Namespace) -> list[s
         def rel(p: Path) -> str:
             r = p.resolve()
             for root in roots:
-                if r.is_relative_to(root):
+                if r != root and r.is_relative_to(root):
                     return "_".join(r.relative_to(root).with_suffix("").parts)
             return p.stem
 
