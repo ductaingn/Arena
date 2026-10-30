@@ -81,6 +81,16 @@ def test_import_of_an_unregistered_source_is_refused_before_a_job_starts():
         asyncio.run(assets.assets_import("world", "nope", ["1"]))
 
 
+def test_smplx_importer_names_the_retarget_tool(tmp_path):
+    from arena_simulation_setup.adapters.arena_animation_retarget.importer import SMPLX
+
+    importer = SMPLX(cache=tmp_path)
+    assert importer.items() == []
+    with pytest.raises(RuntimeError, match="animation_retarget"):
+        importer.import_item("wave", tmp_path)
+    assert importer.import_items(["wave"], tmp_path) == {}
+
+
 def test_retarget_of_a_missing_source_is_refused_before_a_job_starts(tmp_path):
     with pytest.raises(ToolError, match="no such source"):
         asyncio.run(assets.assets_retarget_animation([str(tmp_path / "nope.npz")], str(tmp_path)))
