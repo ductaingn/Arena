@@ -84,12 +84,13 @@ def assets_pull(kind: Kind, name: Annotated[str, Field(description="asset name")
 @domain.tool(destructive=True, open_world=True)
 def assets_push(
     kind: Kind,
-    name: Annotated[str, Field(description="asset name")],
+    name: Annotated[str | None, Field(description="asset name, none publishes every local asset of the kind in one upload")],
     bucket: Bucket = None,
     force: Annotated[bool, Field(description="publish despite a failed preflight or a world that ships in the repo")] = False,
+    only: Annotated[str | None, Field(description="publish only the files matching GLOB[,GLOB], the bucket's other files stay as they are")] = None,
 ) -> dict[str, object]:
     """Publish one asset to its kind's bucket after the preflight `arena asset push` runs, which refuses references nobody else could resolve, with GCS_ACCESS_TOKEN set."""
-    done = cli.run("asset", "push", kind, name, "--yes", *(("--bucket", bucket) if bucket else ()), *(("--force",) if force else ()), timeout=3600, check=False)
+    done = cli.run("asset", "push", kind, *((name,) if name else ("--all",)), "--yes", *(("--bucket", bucket) if bucket else ()), *(("--force",) if force else ()), *(("--only", only) if only else ()), timeout=3600, check=False)
     if done["exit_code"] != 0:
         reason = (done["stderr"] + done["stdout"]).strip().splitlines()[-30:]
         raise ToolError(f"{kind} {name} was not published:\n" + "\n".join(reason), hint="bundle the missing references under the asset directory, or pass force=true")
