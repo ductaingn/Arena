@@ -504,7 +504,7 @@ def import_(argv: list[str]) -> int:
     return _assets("import", *_import_args(pos, opts))
 
 
-IMPORT_KINDS = ("episode", "material", "object", "scenario", "sound", "suite", "world")
+IMPORT_KINDS = ("animation", "episode", "material", "object", "scenario", "sound", "suite", "world")
 
 _KIND = Sub({kind: Manifest(f"asset.{kind}") for kind in KINDS})
 _IMPORT_FLAGS = Flags({"--all": "import every item of the source", "--out": "target root instead of $ARENA_ASSETS_DIR_IMPORTED", "--json": "machine-readable source or item listing"}, valued=("--out",))
