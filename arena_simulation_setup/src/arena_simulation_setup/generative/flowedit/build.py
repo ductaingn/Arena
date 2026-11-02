@@ -14,6 +14,7 @@ from arena_simulation_setup.utils.geometry import Pose, Position
 
 from ..scenario.formats import read_scenario
 from ..scenario.zones import KIND, PACKAGE, VERB, classify
+from .interactions import Use, by_rule, step_uses
 
 if TYPE_CHECKING:
     from arena_simulation_setup.shared.entities import Obstacle
@@ -106,6 +107,35 @@ def _dwell(name: str, kind: str | None, steps: list[tuple[str, str, Duration]], 
     return duration, origin
 
 
+def _uses_of(name: str, kind: str | None, uses: list[Use]) -> list[Use]:
+    """The uses that name object `name`, by its id before its type."""
+    return [u for u in uses if u.target == name] or [u for u in uses if kind and u.target == kind]
+
+
+def _add_uses(scene: Scene, obj: str, block: Mapping[str, Any], model: str, found: list[Use]) -> None:
+    """Add `affords` facts for how people use `obj` and the needs its steps satisfy, by HumanSim's rules when no step uses it."""
+    if not found:
+        rule = by_rule(block, model) if block else None
+        if rule is not None:
+            kind, meet, why = rule
+            scene.add_fact(obj, "affords", f"interaction:{kind}", {"from": why, **({"meet": True} if meet else {})})
+        return
+    # one fact per kind (a KG fact is keyed by subject, verb and object): the first use names it, a SERVICE notes its sides
+    by_kind: dict[str, dict[str, Value]] = {}
+    for u in found:
+        params = by_kind.setdefault(u.kind, {"from": u.origin, **({"meet": True} if u.meet else {}), **({"tag": u.tag} if u.tag else {})})
+        if u.tag:
+            params["offer" if u.offer else "seek"] = True
+    for kind, params in by_kind.items():
+        scene.add_fact(obj, "affords", f"interaction:{kind}", params)
+    stated = {str(f.object) for f in scene.facts if f.subject == obj and f.verb == "satisfies"}
+    for u in found:
+        for need, amount in u.satisfies.items():
+            if f"need:{need}" not in stated:
+                scene.add_fact(obj, "satisfies", f"need:{need}", {"amount": amount, "from": u.origin})
+                stated.add(f"need:{need}")
+
+
 def _add_demand(scene: Scene, obj: str, block: Mapping[str, Any], dwell: tuple[Duration, str] | None, notes: list[str]) -> None:
     """Add the demand facts of `obj` from its `humansim:` block and dwell."""
     service = {k: block[k] for k in ("capacity", "interaction_radius") if block.get(k) is not None}
@@ -146,7 +176,9 @@ def build(root: Path, scenario: Path | None = None, seed: int = 0, notes: list[s
     doc = read_scenario(scenario) if scenario is not None else {}
     refs = _add_scenario_objects(world, root, list(doc.get("objects") or []), seed)
     scene = _scene(world)
-    steps = list(_timed_steps(_agent_type_files(doc, scenario.parent))) if scenario is not None else []
+    files = _agent_type_files(doc, scenario.parent) if scenario is not None else []
+    steps = list(_timed_steps(files))
+    uses = list(step_uses(files))
     stated = {f.subject for f in scene.facts if f.verb == VERB}
     for level_id, level in world.levels.items():
         for zone in level.zones:
@@ -164,9 +196,13 @@ def build(root: Path, scenario: Path | None = None, seed: int = 0, notes: list[s
             if o.name in refs:
                 pose["pose_ref"] = refs[o.name]
             scene.add_fact(obj, "at", f"floor:{level_id}", pose)
+            found = _uses_of(o.name, o.humansim.get("type"), uses)
             dwell = _dwell(o.name, o.humansim.get("type"), steps, notes)
-            if o.humansim or dwell is not None:
+            if dwell is None:
+                dwell = next(((u.duration, u.origin) for u in found if u.duration is not None), None)
+            if o.humansim or dwell is not None or found:
                 _add_demand(scene, obj, o.humansim, dwell, notes)
+                _add_uses(scene, obj, o.humansim, model, found)
     problems = scene.validate()
     if problems:
         raise ValueError("; ".join(problems))
