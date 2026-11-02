@@ -60,7 +60,7 @@ from task_generator.constants.runtime import RUN_EPISODE_BUSY, RUN_EPISODE_SHUTT
 from task_generator.interactive import MarkerHub
 from task_generator.interactive.colors import RobotColors
 from task_generator.interactive.entities import EntityHandles
-from task_generator.manager.environment_manager import EnvironmentManager
+from task_generator.manager.environment_manager import EnvironmentManager, authored_statics
 from task_generator.manager.realizer import Realizer
 from task_generator.manager.robot_manager import RobotsManager
 from task_generator.manager.world_manager.world_manager_ros import (
@@ -1513,7 +1513,7 @@ class TaskGenerator(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleN
                 await self._task.reset(seed=record.seed)
             finally:
                 compacted = self._world_manager.world_compacted()
-                self._judge_zones = zone_polygons(compacted)
+                self._judge_zones = zone_polygons(authored_statics(compacted))
                 self._judge_walls = self._wall_grid(compacted)
                 for manager in self._robots_manager.managers.values():
                     manager.set_episode_conditions(self._episode_conditions)

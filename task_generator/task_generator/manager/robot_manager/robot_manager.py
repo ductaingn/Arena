@@ -28,8 +28,9 @@ from arena_robots.Robot import RobotView
 from arena_runtime._node import NodeInterface
 from arena_runtime.sim._interface import SimUnavailable
 from arena_simulation_setup.shared.conditions import render_until
+from shapely.ops import polylabel
 
-from task_generator.manager.environment_manager import EnvironmentManager
+from task_generator.manager.environment_manager import EnvironmentManager, authored_statics
 from task_generator.manager.robot_manager.controller_manager_client import ControllerManagerClient
 from task_generator.manager.robot_manager.controller_transitions import next_transition
 from task_generator.manager.robot_manager.task_runner import PhaseState, TaskRunner, Transition, standoff_pose
@@ -570,19 +571,28 @@ class RobotManager(NodeInterface):
         return phase
 
     def _resolve_target(self, phase: GoToPhase) -> GoToPhase:
-        """Give a named zone, door or elevator target its dispatch pose unless it carries one, a ped target keeps following the ped."""
-        world = self.node._world_manager.world_compacted()
+        """Give a named zone, door, elevator or docked object target its dispatch pose unless it carries one, a ped target keeps following the ped. A docked object's pose lies within half the dock's inner radius of its deepest point, facing the object."""
+        world = authored_statics(self.node._world_manager.world_compacted())
         corners = world.lookup_zone_polygon(phase.target) if phase.target is not None and phase.pose is None else None
         if corners is None:
             return phase
-        if any(zone.name == phase.target for zone in world.zones):
+        docked = next((entity for entity in world.objects if entity.name == phase.target and entity.dock is not None), None)
+        if docked is not None or any(zone.name == phase.target for zone in world.zones):
+            area = shapely.Polygon([(corner.x, corner.y) for corner in corners])
+            if docked is not None:
+                # away from the dock's edges, so a planner's goal tolerance cannot stop the robot outside it
+                deepest = polylabel(area)
+                area = area.intersection(deepest.buffer(area.exterior.distance(deepest) / 2))
             try:
-                position = self.node._world_manager.get_position_on_map(self.safe_distance, forbid=False, polygon=shapely.Polygon([(corner.x, corner.y) for corner in corners]))
+                position = self.node._world_manager.get_position_on_map(self.safe_distance, forbid=False, polygon=area)
             except RuntimeError as e:
                 raise ValueError(f"robot {self.name!r}: goto target {phase.target!r} has no free cell with {self.safe_distance:.2f} m clearance") from e
         else:
             position = world.point_resolver(self.node.conf.General.RNG.stream("robots", "target", self.name)).resolve(phase.target)
-        return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.identity()))
+        if docked is None:
+            return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.identity()))
+        facing = math.atan2(docked.pose.position.y - position.y, docked.pose.position.x - position.x)
+        return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.from_yaw(facing)))
 
     async def submit_task(self, request: TaskRequest, start: Pose | None = None, pedestrians: Iterable[str] = ()) -> None:
         """Resolve a typed TaskRequest and append it to this episode's phases. Phase poses are abstract until dispatch. `start` is the abstract pose the robot begins from, its current pose when omitted, `pedestrians` names the episode's declared pedestrians that are not spawned yet."""
@@ -623,9 +633,9 @@ class RobotManager(NodeInterface):
                 if phase.signal not in signals:
                     raise ValueError(f"robot {self.name!r}: goto phase expects signal {phase.signal!r}, its {phase.kind} adapter can send {sorted(signals)}")
             if isinstance(phase, GoToPhase) and phase.target is not None:
-                known = set(world_manager.world_compacted().zone_ref_names()) | set(self.node.ped_names()) | set(pedestrians)
+                known = set(authored_statics(world_manager.world_compacted()).zone_ref_names()) | set(self.node.ped_names()) | set(pedestrians)
                 if phase.target not in known:
-                    raise ValueError(f"robot {self.name!r}: goto target {phase.target!r} is neither a zone, door, elevator nor a pedestrian")
+                    raise ValueError(f"robot {self.name!r}: goto target {phase.target!r} is neither a zone, door, elevator, docked object nor a pedestrian")
             if kind_of(phase) not in self._adapters and kind_of(phase) not in self._unsupported_kinds_logged:
                 self._logger.warning(f"robot {self.name!r} has no adapter for phase kind {phase.kind!r}, the phase will fail as UNSUPPORTED_CAP")
 
