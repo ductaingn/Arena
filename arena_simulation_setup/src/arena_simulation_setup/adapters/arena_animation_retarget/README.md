@@ -38,7 +38,7 @@ The wire has no pelvis-tilt joint. By default the tilt is folded into the waist 
 | rotation output (Kimodo) | `global_rot_mats` + `posed_joints`, or `local_rot_mats` (+ `root_positions`) | Y |
 | SMPL-X parameters (AMASS) | `poses`, or `root_orient`/`global_orient` + `pose_body`/`body_pose`; `trans`/`transl`, `betas` | Z |
 
-Only the 22 body joints are used, since Arena has no fingers. The frame rate comes from `fps` or `mocap_frame_rate` (default 30) and can be overridden with `--fps-in`. `--up` overrides the world up axis. Parameter files need a rest skeleton: the default is the body Kimodo generates with, or pass `--model SMPLX_NEUTRAL.npz` to build the exact skeleton for each file's `betas` (numpy only, no `smplx` package needed).
+Only the 22 body joints are used, source finger data is not retargeted. The frame rate comes from `fps` or `mocap_frame_rate` (default 30) and can be overridden with `--fps-in`. `--up` overrides the world up axis. Parameter files need a rest skeleton: the default is the body Kimodo generates with, or pass `--model SMPLX_NEUTRAL.npz` to build the exact skeleton for each file's `betas` (numpy only, no `smplx` package needed).
 
 ## Method
 
@@ -120,7 +120,7 @@ Every conversion prints a summary (`--check` prints the per-clip table, `--repor
 - `*_line`, `*_upper`/`*_lower`, `*_hand_rot`, `trunk`, `head`: in degrees.
 - `step`: the largest frame-to-frame change, which catches flips and jitter.
 
-The axes and chain come from `task_generator`'s `pointing/skeleton.py`, which is loaded from its file without rclpy (`$ARENA_SKELETON` overrides the path). `fk_torch.py` is its batched torch port, held to 1e-9 by a test.
+The axes and chain come from `arena_runtime`'s `humans/pointing/skeleton.py`, which is loaded from its file without rclpy (`$ARENA_SKELETON` overrides the path). `fk_torch.py` is its batched torch port, held to 1e-9 by a test.
 
 ## Tests
 
