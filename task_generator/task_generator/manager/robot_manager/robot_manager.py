@@ -572,8 +572,10 @@ class RobotManager(NodeInterface):
 
     def _resolve_target(self, phase: GoToPhase) -> GoToPhase:
         """Give a named zone, door, elevator or docked object target its dispatch pose unless it carries one, a ped target keeps following the ped. A docked object's pose lies within half the dock's inner radius of its deepest point, facing the object."""
+        if phase.target is None or phase.pose is not None:
+            return phase
         world = authored_statics(self.node._world_manager.world_compacted())
-        corners = world.lookup_zone_polygon(phase.target) if phase.target is not None and phase.pose is None else None
+        corners = world.lookup_zone_polygon(phase.target)
         if corners is None:
             return phase
         docked = next((entity for entity in world.objects if entity.name == phase.target and entity.dock is not None), None)
