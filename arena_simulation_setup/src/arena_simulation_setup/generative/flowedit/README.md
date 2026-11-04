@@ -23,6 +23,12 @@ flowedit edit hospital_1 move obj:fountain --scenario queue -p x=15 -p y=11.5 --
 flowedit edit hospital_1__b6b7b494 layout door:or_door -p op=remove --write
 ```
 
+`flowedit generate <world> [--scenario <scenario>] [--seed N] [--per-type K] [--steps N] [--types move,...] [--controls]` samples edits with the [generator](#generator). A dry run prints the manifest, `--write` saves every edited world and writes the manifest to `$ARENA_ASSETS_DIR_LOCAL/flowedit/<world>__seed<seed>.yaml` (or `--manifest`).
+
+```bash
+flowedit generate hospital_1 --scenario queue --seed 0 --controls --write
+```
+
 ## Graph
 
 | Node | Holds | From |
@@ -56,7 +62,7 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 | `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged) | `at` | the pose, for a world object |
 | `insert` | `obj:<new name>` | `model`, `x`, `y`, `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
 | `remove` | `obj:<name>` | none | the entity and every fact about it | the object, and its `kg.yaml` entity |
-| `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null` | `serves`, `satisfies`, `dwells` (`from: edit:<id>`) | the `humansim:` block, for a world object |
+| `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`, `clear: true` (first drop all demand, the formation included) | `serves`, `satisfies`, `dwells` (`from: edit:<id>`), `has_formation` (by `clear`) | the `humansim:` block, for a world object |
 | `access` | `door:<name>` | `locked`, `authorized`, `unlock_on`, or `remove: true` | access facts | the door's `gate` preset (new gates start unlocked) |
 | `access` | `schedule:<name>` | `regime`, `windows`, `default`, or `remove: true` | access facts | the `schedules:` entry |
 | `layout` | `door:<name>` | `op: add` (`level`, `span`, door fields), `move` (default: `span` or `offset: [dx, dy]`, door fields), `remove` | the door entity | the door |
@@ -79,10 +85,51 @@ edits:
 - {id: b9f2feba, parent: hospital_1__b6b7b494, type: layout, target: 'door:or_door', params: {op: remove}}
 ```
 
+## Generator
+
+[`generate.py`](generate.py) samples edits of every type on a site from a seed. `generate(site, seed, per_type, steps, types)` makes, per type, `per_type` chains of up to `steps` edits (default one), each starting with an edit of that type; later steps draw their type from `types`, and a drawn type with no edit (a function edit once the only object with a need is gone) gives way to the others. Each step draws a proposal, `apply` checks it, and a refused one is drawn again, up to `MAX_TRIES`. A site with nothing to edit, or no valid proposal, gives a note instead.
+
+- **Determinism:** one `random.Random` per step, keyed by the current world's name (which names the chain so far), the scenario, seed, step, type and index. Candidates are sorted before every draw and spots rounded to cm, so the same site, seed and code give the same edits and a shorter chain is a prefix of a longer one. No two chains reach the same world at the same step: a duplicate is drawn again, and that retry may take any object, not only one with a need. Footprints come from asset bounds where they resolve, else a 0.8 m box, so a machine with other assets at hand can draw other spots; the manifest carries `generator_version`.
+- **Spots** (`move`, `insert`): inside an allowed zone (not a stair, elevator, lift or shaft), the footprint clear of the zone's edge, walls, door spans (0.8 m) and, by 0.3 m, every object's footprint. A moved object's own old footprint counts too, so the inert copy of its control never overlaps the original.
+
+| Type | Target | Params drawn |
+|---|---|---|
+| `move` | an object, one with a need (`satisfies`) first | a spot in its own room 0.5-3 m away (`scope: local`, 30 %), else in another room of its level (`scope: room`) |
+| `insert` | `obj:gen_<model>_<n>`, a copy of an object, one with a need first | a spot in any room of its level (`scope: room`), the source's demand copied (service, needs, dwell) |
+| `remove` | an object, one with a need first | none |
+| `function` | an object with a need | `capacity`: a new value in the type's range (`CAPACITY`), objects whose type others share first, none with capacity 0. Or `dwell`: a new mean in the type's range (`DWELL_S`, 3-20 s for dispensers), the authored spread scaled to it, only on the sole object for its need |
+| `access` | a door whose rooms keep another door, a gated door, or a schedule with a regime | lock a door; unlock or ungate a gated one; a schedule window |
+| `layout` | a door | move it 0.5-2 m along its wall; add a 1.5 m door on a wall between two rooms; remove one whose rooms keep another door |
+
+Only objects with a need count as demand: in PEDS only needs send people to an object. `dwell` reaches PEDS through the reader, which writes it as the `duration` of the step at the object. The reader takes one dwell per need, hence the sole-object rule. `satisfies` is not drawn yet. `FIELDS` lists what is drawn and goes into the manifest. Wall paths are not drawn.
+
+**Controls** (`controls(site, chain)`, `--controls`): a function-carrying move or insert gets its geometry-only control, applied to the chain's base: the same model without demand at the edit's spot (`inert_object`, the original left in place). The second control (the model moves, its demand stays at the old spot) waits until the graph can hold demand without a model. Only a chain's first edit has a control. An object without `humansim.type` takes its type from its asset's `annotation.yaml` at runtime, so an inert copy may still be a target by that name.
+
+The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type`, `target`, `id`, `function_carrying`, `scope`), its saved path and its controls:
+
+```yaml
+format: flowedit-generated/1
+generator_version: 1
+base: hospital_1
+scenario: queue
+seed: 0
+per_type: 1
+steps: 1
+fields: [capacity, dwell]
+chains:
+- world: hospital_1__1a2b3c4d
+  edits:
+  - {type: move, target: 'obj:fountain', id: 1a2b3c4d, function_carrying: true, scope: room}
+  path: /…/worlds/hospital_1__1a2b3c4d
+  controls:
+  - {kind: inert_object, world: hospital_1__5e6f7a8b, ids: [5e6f7a8b], path: /…/worlds/hospital_1__5e6f7a8b}
+```
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `build.py` | world + scenario to the graph |
 | `edit.py` | edit operations, sites, saving edited worlds |
-| `cli.py` | `flowedit build`, `flowedit edit` |
+| `generate.py` | sampling edits from a seed, geometry-only controls, the manifest |
+| `cli.py` | `flowedit build`, `flowedit edit`, `flowedit generate` |

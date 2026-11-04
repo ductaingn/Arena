@@ -35,6 +35,7 @@ SEPARATOR = "__"
 ID_LENGTH = 8
 SERVICE_KEYS = ("capacity", "interaction_radius")
 DWELL_KEYS = ("mean", "std", "clip_low", "clip_high")
+DEMAND_VERBS = ("serves", "satisfies", "has_formation", "dwells")
 DOOR_FIELDS = ("kind", "width", "height", "material", "activation_distance", "transition_time", "hold_time", "swing_direction")
 WALL_FIELDS = ("closed", "kind", "material")
 _ON_WALL_M = 0.05
@@ -326,8 +327,11 @@ def _set_dwell(graph: Scene, obj: str, dwell: Any, origin: str) -> None:  # noqa
 
 
 def _function(site: Site, edit: Edit) -> None:
-    """Change an object's demand: `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`."""
-    _check_params(edit.params, ("type", *SERVICE_KEYS, "satisfies", "dwell"))
+    """Change an object's demand: `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`.
+
+    `clear: true` first drops all of it, the formation included, leaving an inert object; the other params then set demand anew.
+    """
+    _check_params(edit.params, ("type", *SERVICE_KEYS, "satisfies", "dwell", "clear"))
     obj, params = edit.target, edit.params
     if obj not in site.graph.entities or kind_of(obj) != "obj":
         raise ValueError(f"{obj} is no object of the graph")
@@ -336,6 +340,11 @@ def _function(site: Site, edit: Edit) -> None:
     if found is not None:
         level, i = found
         block = dict(level.objects[i].humansim)
+    if params.get("clear"):
+        for fact in [f for f in site.graph.facts if f.subject == obj and f.verb in DEMAND_VERBS]:
+            site.graph.remove_fact(fact.subject, fact.verb, fact.object, fact.params)
+        if block is not None:
+            block = {k: v for k, v in block.items() if k == "seats"}
     if "type" in params or any(k in params for k in SERVICE_KEYS):
         _set_service(site.graph, obj, params, block)
     if params.get("satisfies"):

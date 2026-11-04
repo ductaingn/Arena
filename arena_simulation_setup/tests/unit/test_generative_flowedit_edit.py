@@ -158,3 +158,15 @@ def test_cli_prints_the_edit_and_writes_with_write(local_worlds: Path, capsys: p
     assert not local_worlds.exists()
     assert main([*argv, "--write"]) == 0
     assert (local_worlds / printed["world"] / EDITS).is_file()
+
+
+def test_function_clear_leaves_an_inert_object(queue: Site) -> None:
+    demand = ("serves", "satisfies", "dwells", "has_formation")
+    inserted = apply(queue, *EDITS_OF_EVERY_TYPE[1])
+    cleared = apply(inserted, "function", "obj:fountain_2", {"clear": True})
+    assert not [f for f in cleared.graph.facts if f.subject == "obj:fountain_2" and f.verb in demand]
+    objects = yaml.safe_load((save(cleared) / "world.yaml").read_text())["levels"][0]["objects"]
+    assert not next(o for o in objects if o["name"] == "fountain_2").get("humansim")
+    scenario = apply(queue, "function", "obj:fountain", {"clear": True, "type": "fountain", "capacity": 2})
+    assert _facts(scenario.graph, "obj:fountain", "serves") == [("service:fountain", {"capacity": 2})]
+    assert not _facts(scenario.graph, "obj:fountain", "has_formation")
