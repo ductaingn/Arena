@@ -6,6 +6,7 @@ import copy
 import enum
 import hashlib
 import json
+import math
 import re
 import shutil
 from collections.abc import Callable, Mapping, Sequence
@@ -247,8 +248,25 @@ def _rederive(world: World, graph: Scene) -> None:
             graph.add_fact(f"room:{room}", "contains", obj, source=DERIVED)
 
 
+def _front_pose(site: Site, model: object, pose: Mapping[str, Any]) -> dict[str, Any]:
+    """`pose` turned so its +x points where `model`'s annotated front (`face`) does. A node without a model is used from
+    its +x side, as is a model without `face`, so the demand-only node is approached and queued at from the side
+    people used its model from."""
+    from .generate import front_angle, resolve_footprints  # generate imports this module
+
+    if not isinstance(model, str) or not model:
+        return dict(pose)
+    resolve_footprints(site, [model])
+    turn = front_angle(site.root, model)
+    if not turn:
+        return dict(pose)
+    yaw = float(pose.get("yaw", 0.0)) + turn
+    return {**pose, "yaw": round(math.atan2(math.sin(yaw), math.cos(yaw)), 4)}
+
+
 def _leave_demand(site: Site, obj: str, level_id: str, pose: Mapping[str, Any]) -> None:
-    """Move the demand facts of `obj` onto a new graph-only node `<obj>_demand` without a model, posed where `obj` stands."""
+    """Move the demand facts of `obj` (`DEMAND_VERBS`, so also how people use it) onto a new graph-only node
+    `<obj>_demand` without a model, posed where `obj` stands and turned to its front (`_front_pose`)."""
     demand = [f for f in site.graph.facts if f.subject == obj and f.verb in DEMAND_VERBS]
     if not demand:
         raise ValueError(f"{obj} has no demand to leave")
@@ -258,7 +276,7 @@ def _leave_demand(site: Site, obj: str, level_id: str, pose: Mapping[str, Any]) 
     if node in site.graph.entities or any(name in names for names in site.world.names().values()):
         raise ValueError(f"{name!r} is already taken")
     site.graph.add_entity(node)
-    site.graph.add_fact(node, "at", f"floor:{level_id}", dict(pose))
+    site.graph.add_fact(node, "at", f"floor:{level_id}", _front_pose(site, site.graph.entities[obj].props.get("model"), pose))
     for fact in demand:
         params = dict(fact.params)
         if fact.verb == "has_formation" and params.get("anchor_ref") == old_name:

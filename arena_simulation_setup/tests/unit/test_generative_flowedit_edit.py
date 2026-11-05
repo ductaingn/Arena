@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -210,6 +211,22 @@ def test_a_formation_anchored_at_the_moved_object_follows_its_demand(queue: Site
     moved = apply(queue, "move", "obj:gathering_area", {"x": 16.0, "leave_demand": True})
     ((_, params),) = _facts(moved.graph, "obj:gathering_area_demand", "has_formation")
     assert params["anchor_ref"] == "gathering_area_demand"
+
+
+def test_the_demand_only_node_faces_where_its_model_did_and_is_used_as_it_was(queue: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arena_simulation_setup.generative.flowedit import generate
+
+    key = (queue.root, str(queue.graph.entities["obj:gathering_area"].props["model"]))
+    monkeypatch.setitem(generate._FOOTPRINTS, key, None)  # resolved: the tests have no object assets
+    monkeypatch.setitem(generate._FACES, key, "-y")
+    moved = apply(queue, "move", "obj:gathering_area", {"x": 16.0, "leave_demand": True})
+    ((_, old),) = _facts(queue.graph, "obj:gathering_area", "at")
+    ((_, node),) = _facts(moved.graph, "obj:gathering_area_demand", "at")
+    assert (node["x"], node["y"]) == (old["x"], old["y"])
+    front = old["yaw"] - math.pi / 2  # the bench's annotated front is -y, the node's is +x
+    assert node["yaw"] == pytest.approx(math.atan2(math.sin(front), math.cos(front)), abs=1e-3)
+    assert _facts(moved.graph, "obj:gathering_area_demand", "affords") == _facts(queue.graph, "obj:gathering_area", "affords") != []
+    assert not _facts(moved.graph, "obj:gathering_area", "affords")
 
 
 def test_move_leaving_demand_needs_demand_and_a_free_name(queue: Site) -> None:

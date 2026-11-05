@@ -8,6 +8,7 @@ from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EditTy
 from arena_simulation_setup.generative.flowedit.generate import CAPACITY, DEFAULT_DWELL_S, DWELL_S, FIELDS, FLOOR_HEIGHT_M, Generated, dump_manifest, floor_objects, generate
 
 if TYPE_CHECKING:
+    from arena_simulation_setup.generative.flowedit.generate import WallPiece
     from arena_simulation_setup.tree.World.model import Zone
 
 pytest.importorskip("numpy")
@@ -190,6 +191,84 @@ def test_insert_copies_an_objects_demand_onto_a_new_name_at_a_valid_spot(queue: 
         level = str(edit.params["level"])
         zone = _zone_of(queue, level, edit.params["x"], edit.params["y"])
         assert Spots(queue, level).valid(edit.params["model"], zone, edit.params["x"], edit.params["y"], edit.params["yaw"])
+
+
+def test_moved_and_inserted_objects_stand_against_a_wall_facing_the_room(queue: Site) -> None:
+    import math
+
+    import shapely
+    import shapely.ops
+    from arena_simulation_setup.generative.flowedit.generate import ROUNDING_M, WALL_GAP_M, WALL_SLACK_M, WALL_SNAP_M, footprint, front_angle
+
+    for kind in (EditType.MOVE, EditType.INSERT):
+        for chain in generate(queue, seed=0, per_type=8, types=[kind]):
+            edit = chain.site.edits[-1]
+            level = str(edit.params.get("level", "0"))
+            model = str(edit.params.get("model") or queue.graph.entities[edit.target].props["model"])
+            x, y, yaw = edit.params["x"], edit.params["y"], edit.params["yaw"]
+            walls = shapely.union_all([shapely.LineString([(w.start.x, w.start.y), (w.end.x, w.end.y)]) for w in queue.world.levels[level].all_walls])
+            shape = footprint(queue.root, model, x, y, yaw)
+            # as close to a wall as the wall gap allows, the zone edge in front of the wall line taking a little more
+            assert shape.distance(walls) <= WALL_GAP_M + WALL_SLACK_M + 0.35
+            wall = shapely.ops.nearest_points(walls, shapely.Point(x, y))[0]
+            front = yaw + front_angle(queue.root, model)
+            assert math.cos(front) * (x - wall.x) + math.sin(front) * (y - wall.y) > 0  # the front looks away from the wall
+            # and a wall stands right behind the middle of the back
+            fx, fy = math.cos(front), math.sin(front)
+            back = max(-((vx - x) * fx + (vy - y) * fy) for vx, vy in shape.exterior.coords)
+            reach = back + WALL_GAP_M + WALL_SLACK_M + WALL_SNAP_M + ROUNDING_M
+            assert shapely.LineString([(x, y), (x - fx * reach, y - fy * reach)]).intersects(walls)
+
+
+def _spans(pieces: list[WallPiece], x: float) -> list[tuple[float, float]]:
+    """The y ranges of the walled pieces on the line x = `x`."""
+    ys = [[c[1] for c in p.line.coords] for p in pieces if all(abs(c[0] - x) < 1e-9 for c in p.line.coords)]
+    return sorted((round(min(y), 6), round(max(y), 6)) for y in ys)
+
+
+ROOM = ((0.0, 0.0), (10.0, 0.0), (10.0, 4.0), (0.0, 4.0))
+
+
+def test_a_door_gap_at_an_edges_middle_only_cuts_its_wall() -> None:
+    import shapely
+    from arena_simulation_setup.generative.flowedit.generate import wall_pieces
+
+    walls = [((0.0, 0.0), (10.0, 0.0)), ((10.0, 0.0), (10.0, 1.5)), ((10.0, 2.5), (10.0, 4.0)), ((10.0, 4.0), (0.0, 4.0)), ((0.0, 4.0), (0.0, 0.0))]
+    pieces = wall_pieces(shapely.Polygon(ROOM), walls)
+    assert _spans(pieces, 10.0) == [(0.0, 1.5), (2.5, 4.0)]
+    assert {p.normal for p in pieces if all(c[0] == 10.0 for c in p.line.coords)} == {(-1.0, 0.0)}  # into the room
+    assert len(pieces) == 5
+
+
+def test_a_wall_stub_or_a_wall_meeting_an_edge_puts_no_wall_behind_it() -> None:
+    import shapely
+    from arena_simulation_setup.generative.flowedit.generate import wall_pieces
+
+    # a 0.3 m stub in the middle of the west edge, a wall meeting it across, another meeting the north edge
+    walls = [((0.0, 0.0), (10.0, 0.0)), ((0.0, 1.85), (0.0, 2.15)), ((0.0, 2.0), (-1.0, 2.0)), ((5.0, 4.0), (5.0, 6.0))]
+    pieces = wall_pieces(shapely.Polygon(ROOM), walls)
+    assert [[tuple(round(c, 6) for c in xy) for xy in p.line.coords] for p in pieces] == [[(0.0, 0.0), (10.0, 0.0)]]
+
+
+def test_a_wall_off_the_edge_or_turned_away_from_it_counts_only_within_the_snap() -> None:
+    import shapely
+    from arena_simulation_setup.generative.flowedit.generate import WALL_SNAP_M, wall_pieces
+
+    # 0.2 m behind the south edge, past the snap behind the north one, turned 14 degrees away from the east one
+    walls = [((0.0, -0.2), (10.0, -0.2)), ((0.0, 4.0 + WALL_SNAP_M + 0.1), (10.0, 4.0 + WALL_SNAP_M + 0.1)), ((10.0, 0.0), (11.0, 4.0))]
+    pieces = wall_pieces(shapely.Polygon(ROOM), walls)
+    assert [[tuple(round(c, 6) for c in xy) for xy in p.line.coords] for p in pieces] == [[(0.0, 0.0), (10.0, 0.0)]]
+    assert pieces[0].offset(5.0, 0.0) == pytest.approx(-0.2)
+
+
+def test_the_hallway_wall_cut_by_a_door_at_its_middle_takes_objects_but_its_opening_does_not(queue: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import Spots
+
+    spots = Spots(queue, "0")
+    hallway = next(z for z in queue.world.levels["0"].zones if z.name == "central_hallway")
+    east = _spans(spots.wall_edges(hallway), 12.0)
+    assert (13.1, 16.6) in east and (18.1, 21.6) in east  # around the operating room door, the edge's middle (12, 17.1)
+    assert not any(lo < 11.5 < hi for lo, hi in east)  # the sub hallway opens there: no wall
 
 
 def test_door_layouts_move_add_and_remove_without_cutting_a_room_off(queue: Site) -> None:
