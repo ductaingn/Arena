@@ -35,7 +35,8 @@ SEPARATOR = "__"
 ID_LENGTH = 8
 SERVICE_KEYS = ("capacity", "interaction_radius")
 DWELL_KEYS = ("mean", "std", "clip_low", "clip_high")
-DEMAND_VERBS = ("serves", "satisfies", "has_formation", "dwells")
+#: How an object is used (`affords`) is part of its demand: it moves with a left demand and goes with a cleared one.
+DEMAND_VERBS = ("serves", "satisfies", "has_formation", "dwells", "affords")
 FUNCTION_PARAMS = ("type", *SERVICE_KEYS, "satisfies", "dwell", "clear")
 #: Params that only switch an operation on: false names the same edit as leaving them out.
 FLAGS = ("leave_demand", "clear", "remove")

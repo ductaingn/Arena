@@ -165,6 +165,10 @@ class PedMechanics:
         return stops if any(stop.holds for stop in stops) else None
 
 
+class _TargetOnly(Exception):
+    """A target-only object (empty model) has no annotation to read: it is a world object without an obstacle."""
+
+
 def seat_capacity(humansim: Mapping[str, typing.Any], slots: Sequence[AffordanceSlot]) -> int:
     """Queue length at which needs-driven agents pass the object over: the scenario's capacity or seat count, else the most of its sit slots held together, at least 1."""
     if "capacity" in humansim:
@@ -1276,6 +1280,9 @@ class ArenaHumanSimulator(BaseHumanSimulator):
                 raw_slots: list = []
                 bounding_box = None
                 try:
+                    if obstacle.target_only:
+                        # no model: a world object with its demand, no obstacle
+                        raise _TargetOnly
                     if isinstance(resolved, BaseException):
                         raise resolved
                     with open(resolved / "annotation.yaml") as f:
@@ -1296,6 +1303,8 @@ class ArenaHumanSimulator(BaseHumanSimulator):
                     msg.interaction_types = [str(h) for h in annotation.get("hoi", [])]
                     msg.obstacle_type = obstacle_type
                     obstacles_request.obstacles.append(msg)  # pyright: ignore[reportAttributeAccessIssue]
+                except _TargetOnly:
+                    pass
                 except Exception as e:
                     self._logger.warning(f"Failed to build obstacle bbox for '{obstacle.sim_path}': {e}")
 

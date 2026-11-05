@@ -18,6 +18,12 @@ props = []
 auto = true
 propless = true
 
+# a HumanSim interaction kind (USE, QUEUE_USE, SIT_ON, LIE_ON, GROUP_CONVERSATION, ...)
+[nodes.interaction]
+props = []
+auto = true
+propless = true
+
 [verbs.at]
 from = ["obj"]
 to = ["floor"]
@@ -33,6 +39,11 @@ to = ["need"]
 [verbs.has_formation]
 from = ["obj"]
 to = ["formation"]
+
+# how a person uses the object: object-bound kinds run at it, `meet: true` kinds run beside it after a go_to
+[verbs.affords]
+from = ["obj"]
+to = ["interaction"]
 
 [verbs.dwells]
 from = ["obj"]

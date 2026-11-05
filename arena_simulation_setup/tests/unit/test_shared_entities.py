@@ -325,3 +325,9 @@ def test_obstacle_footprint_and_span_are_none_for_an_unresolvable_model(cabinet_
     ghost = Obstacle(name="ghost", model="Kitchen/TestMissingCabinet", pose=Pose())
     assert asyncio.run(ghost.footprint()) is None
     assert asyncio.run(ghost.span()) is None
+
+
+def test_an_object_with_an_empty_model_is_target_only() -> None:
+    target = Obstacle.parse({"name": "fountain_demand", "model": "", "pose": [0.0, 0.0, 0.0], "humansim": {"type": "fountain"}})
+    assert target.target_only
+    assert not Obstacle.parse({"name": "fountain", "model": "Hospital/SM_WaterDispenser_01a", "pose": [0.0, 0.0, 0.0]}).target_only

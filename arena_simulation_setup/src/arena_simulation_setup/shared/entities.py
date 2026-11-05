@@ -219,6 +219,11 @@ class Obstacle(Entity):
     humansim: dict = attrs.field(factory=dict, converter=_humansim_object)
     joints: Joints = attrs.field(default=None, converter=_joints)
 
+    @property
+    def target_only(self) -> bool:
+        """An object with an empty `model` is only a HumanSim target with its `humansim:` demand: no simulator body, no obstacle."""
+        return not self.model.name
+
     async def _corners(self) -> list[Position] | None:
         try:
             view = await self.model.resolve()

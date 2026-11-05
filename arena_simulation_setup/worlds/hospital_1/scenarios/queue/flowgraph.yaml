@@ -343,12 +343,17 @@ entities:
 - {id: 'purpose:break'}
 - {id: 'service:desk'}
 - {id: 'formation:line'}
+- {id: 'interaction:QUEUE_USE'}
 - {id: 'service:gathering_area'}
 - {id: 'formation:f_formation'}
+- {id: 'interaction:GROUP_CONVERSATION'}
 - {id: 'service:fountain'}
 - {id: 'need:thirst'}
+- {id: 'interaction:USE'}
 - {id: 'service:chair'}
+- {id: 'interaction:SIT_ON'}
 - {id: 'service:patient_bed'}
+- {id: 'interaction:LIE_ON'}
 - {id: 'schedule:fire_alarm'}
 - {id: 'regime:alarm'}
 facts:
@@ -1235,6 +1240,10 @@ facts:
   verb: has_formation
   object: formation:line
   params: {base_step: 0.8, front_offset: 0.6}
+- subject: obj:reception_desk
+  verb: affords
+  object: interaction:QUEUE_USE
+  params: {from: 'rule:formation line'}
 - subject: obj:gathering_area
   verb: at
   object: floor:0
@@ -1247,6 +1256,14 @@ facts:
   verb: has_formation
   object: formation:f_formation
   params: {base_radius: 0.8, radius_per_member: 0.12, anchor_kind: object, anchor_ref: gathering_area}
+- subject: obj:gathering_area
+  verb: dwells
+  object: 45.0
+  params: {std: 15.0, clip_low: 15.0, clip_high: 90.0, from: colleague.yaml#chat.hold_conversation}
+- subject: obj:gathering_area
+  verb: affords
+  object: interaction:GROUP_CONVERSATION
+  params: {from: colleague.yaml#chat.hold_conversation, meet: true}
 - subject: obj:fountain
   verb: at
   object: floor:0
@@ -1267,6 +1284,10 @@ facts:
   verb: dwells
   object: 5.0
   params: {std: 1.5, clip_low: 4.0, clip_high: 6.0, from: colleague.yaml#drink.queue_and_drink}
+- subject: obj:fountain
+  verb: affords
+  object: interaction:USE
+  params: {from: colleague.yaml#drink.queue_and_drink}
 - subject: obj:exam_chair_1
   verb: at
   object: floor:0
@@ -1275,6 +1296,10 @@ facts:
   verb: serves
   object: service:chair
   params: {capacity: 1, interaction_radius: 0.8}
+- subject: obj:exam_chair_1
+  verb: affords
+  object: interaction:SIT_ON
+  params: {from: 'rule:seated'}
 - subject: obj:patient_bed_1
   verb: at
   object: floor:0
@@ -1283,5 +1308,9 @@ facts:
   verb: serves
   object: service:patient_bed
   params: {capacity: 1, interaction_radius: 1.2}
+- subject: obj:patient_bed_1
+  verb: affords
+  object: interaction:LIE_ON
+  params: {from: 'rule:prone'}
 - {subject: 'schedule:fire_alarm', verb: asserts, object: 'regime:alarm'}
 constraints: []
