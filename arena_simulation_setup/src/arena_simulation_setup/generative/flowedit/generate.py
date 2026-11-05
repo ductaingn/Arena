@@ -575,13 +575,14 @@ def generate(site: Site, seed: int = 0, per_type: int = 1, steps: int = 1, types
 
 
 class Control(enum.StrEnum):
-    """Geometry-only controls. The second one (the model moves, its demand stays at the old spot) waits until the graph can hold demand without a model."""
+    """Geometry-only controls: only the footprint changes, the demand stays where it was."""
 
     INERT_OBJECT = "inert_object"
+    MOVED_WITHOUT_DEMAND = "moved_without_demand"
 
 
 def controls(site: Site, chain: Generated) -> list[tuple[Control, Site]]:
-    """The geometry-only control of a chain's first edit when it carries function, applied to `site`, the chain's base: a move's or insert's `inert_object`."""
+    """The geometry-only controls of a chain's first edit when it carries function, applied to `site`, the chain's base."""
     first = chain.site.edits[0]
     if not chain.records[0]["function_carrying"] or first.type not in (EditType.MOVE, EditType.INSERT):
         return []
@@ -593,7 +594,11 @@ def controls(site: Site, chain: Generated) -> list[tuple[Control, Site]]:
         level_id, pose = placed
         spot = {k: first.params.get(k, pose[k]) for k in ("x", "y", "yaw")}
         inert = {"model": model, **spot, "level": str(first.params.get("level", level_id))}
-        return [(Control.INERT_OBJECT, apply(site, EditType.INSERT, f"{first.target}{INERT_SUFFIX}", inert))]
+        moved = {**{k: v for k, v in first.params.items() if k in ("x", "y", "yaw", "level")}, "leave_demand": True}
+        return [
+            (Control.INERT_OBJECT, apply(site, EditType.INSERT, f"{first.target}{INERT_SUFFIX}", inert)),
+            (Control.MOVED_WITHOUT_DEMAND, apply(site, EditType.MOVE, first.target, moved)),
+        ]
     keep = ("model", "x", "y", "yaw", "level")
     return [(Control.INERT_OBJECT, apply(site, EditType.INSERT, f"{first.target}{INERT_SUFFIX}", {k: v for k, v in first.params.items() if k in keep}))]
 

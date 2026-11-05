@@ -264,19 +264,38 @@ def _move_chain(queue: Site) -> Generated:
     raise AssertionError("no function-carrying move in 20 seeds")
 
 
-def test_a_function_carrying_move_gets_an_inert_copy_as_its_control(queue: Site) -> None:
+def test_a_function_carrying_move_gets_both_geometry_only_controls(queue: Site) -> None:
     from arena_simulation_setup.generative.flowedit.generate import Control, controls
 
     chain = _move_chain(queue)
     move = chain.site.edits[0]
     made = dict(controls(queue, chain))
-    assert set(made) == {Control.INERT_OBJECT}
+    assert set(made) == {Control.INERT_OBJECT, Control.MOVED_WITHOUT_DEMAND}
     inert = made[Control.INERT_OBJECT]
     ref = f"{move.target}_inert"
     at = next(f.params for f in inert.graph.facts if f.subject == ref and f.verb == "at")
     assert (at["x"], at["y"]) == (move.params["x"], move.params["y"])
     assert not [f for f in inert.graph.facts if f.subject == ref and f.verb in DEMAND_VERBS]
     assert [f.verb for f in inert.graph.facts if f.subject == move.target and f.verb == "satisfies"] == ["satisfies"]  # the original keeps its demand where it stood
+    moved = made[Control.MOVED_WITHOUT_DEMAND]
+    at = next(f.params for f in moved.graph.facts if f.subject == move.target and f.verb == "at")
+    assert (at["x"], at["y"]) == (move.params["x"], move.params["y"])
+    assert not [f for f in moved.graph.facts if f.subject == move.target and f.verb in DEMAND_VERBS]
+    old = next(f.params for f in queue.graph.facts if f.subject == move.target and f.verb == "at")
+    left = next(f.params for f in moved.graph.facts if f.subject == f"{move.target}_demand" and f.verb == "at")
+    assert left == old  # the demand stays at the old spot
+    assert [e.params.get("leave_demand") for e in moved.edits] == [True]
+
+
+def test_a_function_carrying_insert_gets_only_the_inert_copy(queue: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import Control, controls
+
+    for seed in range(20):
+        (chain,) = generate(queue, seed=seed, types=[EditType.INSERT])
+        if chain.records[0]["function_carrying"]:
+            assert [kind for kind, _ in controls(queue, chain)] == [Control.INERT_OBJECT]
+            return
+    raise AssertionError("no function-carrying insert in 20 seeds")
 
 
 def test_controls_are_saved_and_listed_in_the_manifest(queue: Site) -> None:
@@ -289,7 +308,7 @@ def test_controls_are_saved_and_listed_in_the_manifest(queue: Site) -> None:
     for path in worlds.values():
         WorldIdentifier(path.name).resolve_sync().load()
     manifest = dump_manifest(queue, [chain], 0, 1, 1, worlds, {chain.site.name: made})
-    assert [c["kind"] for c in manifest["chains"][0]["controls"]] == ["inert_object"]
+    assert [c["kind"] for c in manifest["chains"][0]["controls"]] == ["inert_object", "moved_without_demand"]
 
 
 def test_geometry_only_edits_get_no_controls(queue: Site) -> None:

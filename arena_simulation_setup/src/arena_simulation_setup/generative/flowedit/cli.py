@@ -140,7 +140,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=int, default=1, help="edits per chain, the first of the chain's type (default 1)")
     p.add_argument("--types", type=_types, default=list(EditType), metavar="TYPE[,TYPE...]", help=f"edit types to start chains with and draw later steps from (default: {','.join(EditType)})")
     p.add_argument("--worlds", type=Path, default=None, help="worlds root to read (default: the ARENA_WORLD_PATH roots, then $ARENA_DIR/arena_simulation_setup/worlds, then the resolvers)")
-    p.add_argument("--controls", action="store_true", help="also make the geometry-only controls of every function-carrying move or insert: the model without demand at the new spot, and for a move the object moved without demand")
+    p.add_argument("--controls", action="store_true", help="also make the geometry-only controls of every function-carrying move or insert: the model without demand at the new spot, and for a move the model moved with its demand left at the old spot")
     p.add_argument("--manifest", type=Path, default=None, help=f"manifest file to write (default: $ARENA_ASSETS_DIR_LOCAL/{MANIFESTS}/<world>__seed<seed>.yaml)")
     p.add_argument("--write", action="store_true", help="save the edited worlds and the manifest (default: print the manifest)")
     p.set_defaults(fn=_cmd_generate)

@@ -163,6 +163,47 @@ def test_function_clear_leaves_an_inert_object(queue: Site) -> None:
     assert not _facts(scenario.graph, "obj:fountain", "has_formation")
 
 
+def _demand(scene: Scene, ref: str) -> set[tuple[str, Value, tuple[tuple[str, Value], ...]]]:
+    return {(f.verb, f.object, tuple(sorted(f.params.items()))) for f in scene.facts if f.subject == ref and f.verb in DEMAND_VERBS}
+
+
+def test_move_leaving_demand_leaves_it_on_a_demand_only_node_at_the_old_spot(queue: Site) -> None:
+    moved = apply(queue, "move", "obj:fountain", {"x": 15.0, "y": 11.5, "leave_demand": True})
+    assert not _demand(moved.graph, "obj:fountain")
+    assert _demand(moved.graph, "obj:fountain_demand") == _demand(queue.graph, "obj:fountain") != set()
+    assert _facts(moved.graph, "obj:fountain_demand", "at") == _facts(queue.graph, "obj:fountain", "at")
+    assert "model" not in moved.graph.entities["obj:fountain_demand"].props
+    assert _rooms(moved.graph, "obj:fountain_demand") == ["room:central_hallway"]
+    assert _rooms(moved.graph, "obj:fountain") == ["room:sub_hallway"]
+    assert moved.name != apply(queue, "move", "obj:fountain", {"x": 15.0, "y": 11.5}).name
+    reopened = open_site(save(moved))
+    assert reopened.graph.validate() == []
+    assert _demand(reopened.graph, "obj:fountain_demand") == _demand(moved.graph, "obj:fountain_demand")
+
+
+def test_move_leaving_demand_empties_a_world_objects_humansim_block(queue: Site) -> None:
+    inserted = apply(queue, *EDITS_OF_EVERY_TYPE[1])
+    moved = apply(inserted, "move", "obj:fountain_2", {"x": 21.0, "leave_demand": True})
+    objects = yaml.safe_load((save(moved) / "world.yaml").read_text())["levels"][0]["objects"]
+    assert not next(o for o in objects if o["name"] == "fountain_2").get("humansim")
+    assert all(o["name"] != "fountain_2_demand" for o in objects)  # the demand-only node lives in the graph only
+    assert _demand(moved.graph, "obj:fountain_2_demand") == _demand(inserted.graph, "obj:fountain_2")
+
+
+def test_a_formation_anchored_at_the_moved_object_follows_its_demand(queue: Site) -> None:
+    moved = apply(queue, "move", "obj:gathering_area", {"x": 16.0, "leave_demand": True})
+    ((_, params),) = _facts(moved.graph, "obj:gathering_area_demand", "has_formation")
+    assert params["anchor_ref"] == "gathering_area_demand"
+
+
+def test_move_leaving_demand_needs_demand_and_a_free_name(queue: Site) -> None:
+    with pytest.raises(ValueError, match="no demand"):
+        apply(queue, "move", "obj:reception_trashcan_1", {"x": 3.0, "leave_demand": True})
+    taken = apply(queue, "insert", "obj:fountain_demand", {"model": "Hospital/SM_WaterDispenser_01a", "x": 20.0, "y": 5.0})
+    with pytest.raises(ValueError, match="already taken"):
+        apply(taken, "move", "obj:fountain", {"x": 15.0, "y": 11.5, "leave_demand": True})
+
+
 def _world_object(site: Site, name: str) -> Obstacle:
     return next(o for level in site.world.levels.values() for o in level.objects if o.name == name)
 
@@ -185,6 +226,8 @@ def test_an_inserted_objects_dwell_names_the_insert_edit(queue: Site) -> None:
 
 
 def test_a_false_flag_names_the_same_edit_as_leaving_it_out(queue: Site) -> None:
+    move = {"x": 15.0, "y": 11.5}
+    assert apply(queue, "move", "obj:fountain", {**move, "leave_demand": False}).name == apply(queue, "move", "obj:fountain", move).name
     assert apply(queue, "function", "obj:fountain", {"capacity": 2, "clear": False}).name == apply(queue, "function", "obj:fountain", {"capacity": 2}).name
     assert apply(queue, "access", "door:or_door", {"locked": True, "remove": False}).name == apply(queue, "access", "door:or_door", {"locked": True}).name
 

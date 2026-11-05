@@ -38,7 +38,9 @@ DWELL_KEYS = ("mean", "std", "clip_low", "clip_high")
 DEMAND_VERBS = ("serves", "satisfies", "has_formation", "dwells")
 FUNCTION_PARAMS = ("type", *SERVICE_KEYS, "satisfies", "dwell", "clear")
 #: Params that only switch an operation on: false names the same edit as leaving them out.
-FLAGS = ("clear", "remove")
+FLAGS = ("leave_demand", "clear", "remove")
+#: Suffix of the demand-only node a `move` with `leave_demand` leaves at the object's old spot.
+DEMAND_SUFFIX = "_demand"
 DOOR_FIELDS = ("kind", "width", "height", "material", "activation_distance", "transition_time", "hold_time", "swing_direction")
 WALL_FIELDS = ("closed", "kind", "material")
 _ON_WALL_M = 0.05
@@ -225,9 +227,33 @@ def _rederive(world: World, graph: Scene) -> None:
             graph.add_fact(f"room:{room}", "contains", obj, source=DERIVED)
 
 
+def _leave_demand(site: Site, obj: str, level_id: str, pose: Mapping[str, Any]) -> None:
+    """Move the demand facts of `obj` onto a new graph-only node `<obj>_demand` without a model, posed where `obj` stands."""
+    demand = [f for f in site.graph.facts if f.subject == obj and f.verb in DEMAND_VERBS]
+    if not demand:
+        raise ValueError(f"{obj} has no demand to leave")
+    old_name = _name(obj, "obj")
+    node = f"{obj}{DEMAND_SUFFIX}"
+    name = _name(node, "obj")
+    if node in site.graph.entities or any(name in names for names in site.world.names().values()):
+        raise ValueError(f"{name!r} is already taken")
+    site.graph.add_entity(node)
+    site.graph.add_fact(node, "at", f"floor:{level_id}", dict(pose))
+    for fact in demand:
+        params = dict(fact.params)
+        if fact.verb == "has_formation" and params.get("anchor_ref") == old_name:
+            params["anchor_ref"] = name
+        site.graph.remove_fact(fact.subject, fact.verb, fact.object, fact.params)
+        site.graph.add_fact(node, fact.verb, fact.object, params, source=fact.source)
+    found = _world_object(site.world, old_name)
+    if found is not None:
+        level, i = found
+        level.objects[i] = attrs.evolve(level.objects[i], humansim={k: v for k, v in level.objects[i].humansim.items() if k == "seats"})
+
+
 def _move(site: Site, edit: Edit) -> None:
-    """Move an object: `x`, `y`, `yaw` (default: unchanged), `level` (default: its own)."""
-    _check_params(edit.params, ("x", "y", "yaw", "level"))
+    """Move an object: `x`, `y`, `yaw` (default: unchanged), `level` (default: its own), `leave_demand` to leave its demand at the old spot."""
+    _check_params(edit.params, ("x", "y", "yaw", "level", "leave_demand"))
     placed = _at(site.graph, edit.target)
     if placed is None:
         raise ValueError(f"{edit.target} is no object of the graph")
@@ -235,6 +261,8 @@ def _move(site: Site, edit: Edit) -> None:
     level_id = str(edit.params.get("level", old_level_id))
     _level(site.world, level_id)
     x, y, yaw = (float(edit.params.get(k, pose[k])) for k in ("x", "y", "yaw"))
+    if edit.params.get("leave_demand"):
+        _leave_demand(site, edit.target, old_level_id, pose)
     site.graph.remove_fact(edit.target, "at", f"floor:{old_level_id}")
     site.graph.add_fact(edit.target, "at", f"floor:{level_id}", {"x": x, "y": y, "yaw": yaw})
     found = _world_object(site.world, _name(edit.target, "obj"))

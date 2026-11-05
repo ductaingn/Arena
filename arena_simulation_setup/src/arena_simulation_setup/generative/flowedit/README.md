@@ -38,6 +38,7 @@ flowedit generate hospital_1 --scenario queue --seed 0 --controls --write
 | `obj:<name>` | prop `model`, `at floor:<level> {x, y, yaw, pose_ref}` | `world.yaml` objects and the scenario's `objects:` |
 | `obj` demand | `serves service:<type> {capacity, interaction_radius}`, `satisfies need:<need> {amount}`, `has_formation formation:<type> {<params>, anchor_kind, anchor_ref}` | the object's `humansim:` block |
 | `obj` dwell | `dwells <mean s> {std, clip_low, clip_high, from}` | the `duration` of the first agent type step whose `target` is the object's name, else its type |
+| `obj:<name>_demand` | no `model`: only `at` and the demand facts `<name>` had | a `move` with `leave_demand` (the `moved_without_demand` control) |
 | `door` access | `gated <locked>`, `authorizes <name>` per authorized name, `unlocks_on regime:<regime>` | the door's `gate` preset |
 | `schedule:<name>` | `asserts regime:<regime> {default}`, `window <start s> {end, value}` per window | the world's `schedules:` |
 
@@ -59,7 +60,7 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 
 | Type | Target | Params | Graph | `world.yaml` |
 |---|---|---|---|---|
-| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged) | `at` | the pose, for a world object, its height, roll and pitch kept |
+| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged), `leave_demand: true` (the demand stays at the old spot) | `at`; with `leave_demand` the demand facts go to a new `obj:<name>_demand` at the old pose | the pose, for a world object, its height, roll and pitch kept; with `leave_demand` its `humansim:` block keeps only `seats` |
 | `insert` | `obj:<new name>` | `model`, `x`, `y`, `z` (0), `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
 | `remove` | `obj:<name>` | none | the entity and every fact about it | the object, and its `kg.yaml` entity |
 | `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`, `clear: true` (first drop all demand, the formation included) | `serves`, `satisfies`, `dwells` (`from: edit:<id>`), `has_formation` (by `clear`) | the `humansim:` block, for a world object |
@@ -69,11 +70,12 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 | `layout` | `wall:<level>/<index>`, `wall:<level>` to add | `op: add` (`path`, `closed`, `kind`, `material`), `move` (`path` or `offset`), `remove` | none | the `walls:` path at that index |
 
 - **Scenario objects** (the fountain of `queue`) change only in the graph. A reader from graph to scenario (not built yet) is to write them into the scenario.
+- **Demand-only nodes** (`obj:<name>_demand`, an object without `model`) also live only in the graph. The reader is to write each as a PEDS target without an obstacle. A formation anchored at `<name>` by name is anchored at the new node. They can be moved, removed and given another function like any graph object; the generator never moves or copies them, having no model.
 - **Doors:** a moved or added door must lie on a wall. A door moved or removed from a gap left in its wall gets the gap closed with a wall styled like the wall at its start. Walls drawn through a door are cut at runtime anyway.
 - **Walls:** only `walls:` paths count. Walls from a zone's `walls: outline` are not addressable.
 - **Checks** stay basic: unknown target, taken name, door off a wall, then `World.validate` and the graph's vocabulary. Rules about rooms or overlap belong to the edit generator.
 
-`save` writes the world to the writable local root (`$ARENA_ASSETS_DIR_LOCAL/worlds`, see [worlds/README.md](../../../../worlds/README.md#how-worldidentifier-resolves-a-name)) as `<base>__<id>`. `<id>` is a hash of the last edit's record, with ints read as floats and false flags (`clear`, `remove`) left out. The record names its parent world, so the hash also names the whole chain. The save copies the source world's `assets/`, and writes `flowgraph.yaml` and `edits.yaml` next to `world.yaml`. The scenarios are not copied.
+`save` writes the world to the writable local root (`$ARENA_ASSETS_DIR_LOCAL/worlds`, see [worlds/README.md](../../../../worlds/README.md#how-worldidentifier-resolves-a-name)) as `<base>__<id>`. `<id>` is a hash of the last edit's record, with ints read as floats and false flags (`leave_demand`, `clear`, `remove`) left out. The record names its parent world, so the hash also names the whole chain. The save copies the source world's `assets/`, and writes `flowgraph.yaml` and `edits.yaml` next to `world.yaml`. The scenarios are not copied.
 
 ```yaml
 format: flowedit-edits/1
@@ -104,7 +106,14 @@ edits:
 
 Only objects with a need count as demand: in PEDS only needs send people to an object. `dwell` reaches PEDS through the reader, which writes it as the `duration` of the step at the object. The reader takes one dwell per need, hence the sole-object rule. `satisfies` is not drawn yet. `FIELDS` lists what is drawn and goes into the manifest. Wall paths are not drawn.
 
-**Controls** (`controls(site, chain)`, `--controls`): a function-carrying move or insert gets its geometry-only control, applied to the chain's base: the same model without demand at the edit's spot (`inert_object`, the original left in place). The second control (the model moves, its demand stays at the old spot) waits until the graph can hold demand without a model. Only a chain's first edit has a control. An object without `humansim.type` takes its type from its asset's `annotation.yaml` at runtime, so an inert copy may still be a target by that name.
+**Controls** (`controls(site, chain)`, `--controls`): a function-carrying move or insert gets geometry-only controls, applied to the chain's base, in which only the footprint changes:
+
+| Control | Edit | Result |
+|---|---|---|
+| `inert_object` | `insert obj:<name>_inert` (move or insert) | the same model without demand at the edit's spot, the original left in place |
+| `moved_without_demand` | `move obj:<name>` with `leave_demand: true` (move only) | the model at the edit's spot, its demand at the old spot on `obj:<name>_demand` |
+
+Only a chain's first edit has controls. An object without `humansim.type` takes its type from its asset's `annotation.yaml` at runtime, so the inert copy, and the moved model of `moved_without_demand`, may still be a target by that name.
 
 The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type`, `target`, `id`, `function_carrying`, `scope`), its saved path and its controls:
 
@@ -124,6 +133,7 @@ chains:
   path: /…/worlds/hospital_1__1a2b3c4d
   controls:
   - {kind: inert_object, world: hospital_1__5e6f7a8b, ids: [5e6f7a8b], path: /…/worlds/hospital_1__5e6f7a8b}
+  - {kind: moved_without_demand, world: hospital_1__9c0d1e2f, ids: [9c0d1e2f], path: /…/worlds/hospital_1__9c0d1e2f}
 ```
 
 ## Files
