@@ -99,8 +99,9 @@ class Generated:
 
 
 def rng_for(site: Site, seed: int, step: int, edit_type: EditType, index: int, purpose: str = "edit") -> random.Random:
-    """The RNG of one step: keyed by the current world's name, which names the chain so far through its edit ids."""
-    return random.Random(f"{site.name}:{site.scenario}:{seed}:{step}:{edit_type.value}:{index}:{purpose}")
+    """The RNG of one step: keyed by the current world's key (`Site.key`, `<base>__<last edit id>`), which names the chain
+    so far through its edit ids; the readable part of the world's name never enters a draw."""
+    return random.Random(f"{site.key}:{site.scenario}:{seed}:{step}:{edit_type.value}:{index}:{purpose}")
 
 
 def _facts(site: Site, subject: str, verb: str) -> list[Fact]:
@@ -525,10 +526,10 @@ def sample_step(site: Site, edit_type: EditType, seed: int, step: int, index: in
         except ValueError as exc:
             refused = f"last refusal: {exc}"
             continue
-        if edited.name in taken:
+        if edited.key in taken:
             wide = True
             continue
-        taken.add(edited.name)
+        taken.add(edited.key)
         record = {"type": sampled.type.value, "target": sampled.target, "id": edited.edits[-1].id, "function_carrying": function_carrying(site, sampled)}
         if sampled.scope is not None:
             record["scope"] = sampled.scope
