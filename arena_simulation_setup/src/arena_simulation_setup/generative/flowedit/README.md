@@ -59,8 +59,8 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 
 | Type | Target | Params | Graph | `world.yaml` |
 |---|---|---|---|---|
-| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged) | `at` | the pose, for a world object |
-| `insert` | `obj:<new name>` | `model`, `x`, `y`, `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
+| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged) | `at` | the pose, for a world object, its height, roll and pitch kept |
+| `insert` | `obj:<new name>` | `model`, `x`, `y`, `z` (0), `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
 | `remove` | `obj:<name>` | none | the entity and every fact about it | the object, and its `kg.yaml` entity |
 | `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`, `clear: true` (first drop all demand, the formation included) | `serves`, `satisfies`, `dwells` (`from: edit:<id>`), `has_formation` (by `clear`) | the `humansim:` block, for a world object |
 | `access` | `door:<name>` | `locked`, `authorized`, `unlock_on`, or `remove: true` | access facts | the door's `gate` preset (new gates start unlocked) |
@@ -73,7 +73,7 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 - **Walls:** only `walls:` paths count. Walls from a zone's `walls: outline` are not addressable.
 - **Checks** stay basic: unknown target, taken name, door off a wall, then `World.validate` and the graph's vocabulary. Rules about rooms or overlap belong to the edit generator.
 
-`save` writes the world to the writable local root (`$ARENA_ASSETS_DIR_LOCAL/worlds`, see [worlds/README.md](../../../../worlds/README.md#how-worldidentifier-resolves-a-name)) as `<base>__<id>`. `<id>` is a hash of the last edit's record, with ints read as floats. The record names its parent world, so the hash also names the whole chain. The save copies the source world's `assets/`, and writes `flowgraph.yaml` and `edits.yaml` next to `world.yaml`. The scenarios are not copied.
+`save` writes the world to the writable local root (`$ARENA_ASSETS_DIR_LOCAL/worlds`, see [worlds/README.md](../../../../worlds/README.md#how-worldidentifier-resolves-a-name)) as `<base>__<id>`. `<id>` is a hash of the last edit's record, with ints read as floats and false flags (`clear`, `remove`) left out. The record names its parent world, so the hash also names the whole chain. The save copies the source world's `assets/`, and writes `flowgraph.yaml` and `edits.yaml` next to `world.yaml`. The scenarios are not copied.
 
 ```yaml
 format: flowedit-edits/1
@@ -87,15 +87,16 @@ edits:
 
 ## Generator
 
-[`generate.py`](generate.py) samples edits of every type on a site from a seed. `generate(site, seed, per_type, steps, types)` makes, per type, `per_type` chains of up to `steps` edits (default one), each starting with an edit of that type; later steps draw their type from `types`, and a drawn type with no edit (a function edit once the only object with a need is gone) gives way to the others. Each step draws a proposal, `apply` checks it, and a refused one is drawn again, up to `MAX_TRIES`. A site with nothing to edit, or no valid proposal, gives a note instead.
+[`generate.py`](generate.py) samples edits of every type on a site from a seed. `generate(site, seed, per_type, steps, types)` makes, per type, `per_type` chains of up to `steps` edits (default one), each starting with an edit of that type; later steps draw their type from `types`, and a drawn type with no edit (a function edit once the only object with a need is gone) gives way to the others. Each step draws a proposal, `apply` checks it, and a refused one is drawn again, up to `MAX_TRIES`. A site with nothing to edit, or no valid proposal, gives a note instead, which names the last refusal. A chain whose first edit fails is left out; one whose later step finds no edit of any type ends there.
 
 - **Determinism:** one `random.Random` per step, keyed by the current world's name (which names the chain so far), the scenario, seed, step, type and index. Candidates are sorted before every draw and spots rounded to cm, so the same site, seed and code give the same edits and a shorter chain is a prefix of a longer one. No two chains reach the same world at the same step: a duplicate is drawn again, and that retry may take any object, not only one with a need. Footprints come from asset bounds where they resolve, else a 0.8 m box, so a machine with other assets at hand can draw other spots; the manifest carries `generator_version`.
+- **On the floor:** spots are drawn on the floor, so a world object standing higher than 5 cm (on a table, a shelf or a wall) is neither moved nor copied.
 - **Spots** (`move`, `insert`): inside an allowed zone (not a stair, elevator, lift or shaft), the footprint clear of the zone's edge, walls, door spans (0.8 m) and, by 0.3 m, every object's footprint. A moved object's own old footprint counts too, so the inert copy of its control never overlaps the original.
 
 | Type | Target | Params drawn |
 |---|---|---|
-| `move` | an object, one with a need (`satisfies`) first | a spot in its own room 0.5-3 m away (`scope: local`, 30 %), else in another room of its level (`scope: room`) |
-| `insert` | `obj:gen_<model>_<n>`, a copy of an object, one with a need first | a spot in any room of its level (`scope: room`), the source's demand copied (service, needs, dwell) |
+| `move` | an object on the floor, one with a need (`satisfies`) first | a spot in its own room 0.5-3 m away (`scope: local`, 30 %), else in another room of its level (`scope: room`) |
+| `insert` | `obj:gen_<model>_<n>`, a copy of an object on the floor, one with a need first | a spot in any room of its level (`scope: room`), the source's demand copied (service, needs, dwell) |
 | `remove` | an object, one with a need first | none |
 | `function` | an object with a need | `capacity`: a new value in the type's range (`CAPACITY`), objects whose type others share first, none with capacity 0. Or `dwell`: a new mean in the type's range (`DWELL_S`, 3-20 s for dispensers), the authored spread scaled to it, only on the sole object for its need |
 | `access` | a door whose rooms keep another door, a gated door, or a schedule with a regime | lock a door; unlock or ungate a gated one; a schedule window |
@@ -109,7 +110,7 @@ The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type
 
 ```yaml
 format: flowedit-generated/1
-generator_version: 1
+generator_version: 2
 base: hospital_1
 scenario: queue
 seed: 0

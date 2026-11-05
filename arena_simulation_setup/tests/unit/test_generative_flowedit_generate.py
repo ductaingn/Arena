@@ -1,29 +1,21 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from arena_simulation_setup.generative.flowedit.edit import EditType, Site, dump_edits, open_site, save
-from arena_simulation_setup.generative.flowedit.generate import CAPACITY, DEFAULT_DWELL_S, DWELL_S, FIELDS, dump_manifest, generate
+from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EditType, Site, dump_edits, open_site, save
+from arena_simulation_setup.generative.flowedit.generate import CAPACITY, DEFAULT_DWELL_S, DWELL_S, FIELDS, FLOOR_HEIGHT_M, Generated, dump_manifest, floor_objects, generate
+
+if TYPE_CHECKING:
+    from arena_simulation_setup.tree.World.model import Zone
 
 pytest.importorskip("numpy")
+pytestmark = pytest.mark.usefixtures("local_root")
 
 WORLDS = Path(__file__).resolve().parents[2] / "worlds"
 HOSPITAL = WORLDS / "hospital_1"
 STEP_ONE = (EditType.REMOVE, EditType.FUNCTION, EditType.ACCESS)
-
-
-@pytest.fixture(autouse=True)
-def local_worlds(tmp_path: Path) -> Iterator[Path]:
-    previous = os.environ.get("ARENA_ASSETS_DIR_LOCAL")
-    os.environ["ARENA_ASSETS_DIR_LOCAL"] = str(tmp_path)
-    yield tmp_path / "worlds"
-    if previous is None:
-        del os.environ["ARENA_ASSETS_DIR_LOCAL"]
-    else:
-        os.environ["ARENA_ASSETS_DIR_LOCAL"] = previous
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +23,7 @@ def queue() -> Site:
     return open_site(HOSPITAL, "queue")
 
 
-def _edits(chains: list) -> list[dict]:
+def _edits(chains: list[Generated]) -> list[dict[str, Any]]:
     return [dump_edits(chain.site) for chain in chains]
 
 
@@ -115,12 +107,12 @@ def test_remove_prefers_objects_with_demand(queue: Site) -> None:
         assert chain.records[0]["function_carrying"] is True
 
 
-def test_every_sampled_edit_saves_a_world_that_loads(queue: Site, local_worlds: Path) -> None:
+def test_every_sampled_edit_saves_a_world_that_loads(queue: Site, local_root: Path) -> None:
     from arena_simulation_setup.tree.World import WorldIdentifier
 
     for chain in generate(queue, seed=2, steps=2, types=STEP_ONE):
         path = save(chain.site)
-        assert path.parent == local_worlds
+        assert path.parent == local_root / "worlds"
         WorldIdentifier(path.name).resolve_sync().load()
 
 
@@ -135,7 +127,7 @@ def test_manifest_names_each_chain(queue: Site) -> None:
 SHIPPED = sorted(p.name for p in WORLDS.iterdir() if not p.name.startswith(".") and (p / "world.yaml").is_file())
 
 
-def _zone_of(site: Site, level_id: str, x: float, y: float):  # noqa: ANN202 - a world Zone
+def _zone_of(site: Site, level_id: str, x: float, y: float) -> Zone:
     from arena_simulation_setup.generative.flowedit.build import zones_at
     from arena_simulation_setup.generative.flowedit.generate import allowed_zones
     from arena_simulation_setup.utils.geometry import Position
@@ -182,7 +174,7 @@ def test_a_moved_object_never_overlaps_its_old_footprint(queue: Site) -> None:
         model = str(queue.graph.entities[edit.target].props["model"])
         old = footprint(queue.root, model, float(before["x"]), float(before["y"]), float(before["yaw"]))
         new = footprint(queue.root, model, edit.params["x"], edit.params["y"], edit.params["yaw"])
-        assert not old.intersects(new)  # the inert copy of control 1 stands there next to the original
+        assert not old.intersects(new)  # the inert_object copy stands there next to the original
         local += chain.records[0]["scope"] == "local"
     assert local > 0
 
@@ -221,7 +213,7 @@ def test_every_edit_type_shows_up_on_the_shipped_worlds() -> None:
 
 
 @pytest.mark.parametrize("name", SHIPPED)
-def test_every_sampled_edit_of_a_shipped_world_exports_a_world_that_loads(name: str, local_worlds: Path) -> None:
+def test_every_sampled_edit_of_a_shipped_world_exports_a_world_that_loads(name: str) -> None:
     from arena_simulation_setup.tree.World import WorldIdentifier
 
     for chain in generate(open_site(WORLDS / name), seed=0):
@@ -229,7 +221,7 @@ def test_every_sampled_edit_of_a_shipped_world_exports_a_world_that_loads(name: 
         WorldIdentifier(path.name).resolve_sync().load()
 
 
-def test_cli_prints_the_manifest_and_writes_worlds_and_manifest(local_worlds: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_prints_the_manifest_and_writes_worlds_and_manifest(local_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
     import yaml
     from arena_simulation_setup.generative.flowedit.cli import main
 
@@ -237,9 +229,9 @@ def test_cli_prints_the_manifest_and_writes_worlds_and_manifest(local_worlds: Pa
     assert main(argv) == 0
     printed = yaml.safe_load(capsys.readouterr().out)
     assert [c["edits"][0]["type"] for c in printed["chains"]] == ["move", "function"]
-    assert not local_worlds.exists()
+    assert not (local_root / "worlds").exists()
     assert main([*argv, "--write"]) == 0
-    manifest = local_worlds.parent / "flowedit" / "hospital_1__seed2.yaml"
+    manifest = local_root / "flowedit" / "hospital_1__seed2.yaml"
     written = yaml.safe_load(manifest.read_text())
     assert [c["world"] for c in written["chains"]] == [c["world"] for c in printed["chains"]]
     assert all((Path(c["path"]) / "world.yaml").is_file() and not (Path(c["path"]) / "scenarios").exists() for c in written["chains"])
@@ -264,7 +256,7 @@ def test_access_never_locks_a_room_off(queue: Site) -> None:
             assert edit.target in spare
 
 
-def _move_chain(queue: Site):  # noqa: ANN202 - a Generated chain
+def _move_chain(queue: Site) -> Generated:
     for seed in range(20):
         (chain,) = generate(queue, seed=seed, types=[EditType.MOVE])
         if chain.records[0]["function_carrying"]:
@@ -283,7 +275,7 @@ def test_a_function_carrying_move_gets_an_inert_copy_as_its_control(queue: Site)
     ref = f"{move.target}_inert"
     at = next(f.params for f in inert.graph.facts if f.subject == ref and f.verb == "at")
     assert (at["x"], at["y"]) == (move.params["x"], move.params["y"])
-    assert not [f for f in inert.graph.facts if f.subject == ref and f.verb in ("serves", "satisfies", "dwells", "has_formation")]
+    assert not [f for f in inert.graph.facts if f.subject == ref and f.verb in DEMAND_VERBS]
     assert [f.verb for f in inert.graph.facts if f.subject == move.target and f.verb == "satisfies"] == ["satisfies"]  # the original keeps its demand where it stood
 
 
@@ -307,11 +299,19 @@ def test_geometry_only_edits_get_no_controls(queue: Site) -> None:
     assert controls(queue, chain) == []
 
 
-def test_cli_writes_the_controls_with_controls(local_worlds: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_writes_the_controls_with_controls(local_root: Path) -> None:
     import yaml
     from arena_simulation_setup.generative.flowedit.cli import main
 
     assert main(["generate", "hospital_1", "--scenario", "queue", "--seed", "0", "--types", "move,insert", "--controls", "--write", "--worlds", str(WORLDS)]) == 0
-    written = yaml.safe_load((local_worlds.parent / "flowedit" / "hospital_1__seed0.yaml").read_text())
+    written = yaml.safe_load((local_root / "flowedit" / "hospital_1__seed0.yaml").read_text())
     made = [c for chain in written["chains"] for c in chain.get("controls", [])]
     assert made and all(Path(c["path"]).is_dir() for c in made)
+
+
+def test_raised_objects_are_neither_moved_nor_copied() -> None:
+    site = open_site(HOSPITAL)
+    raised = {f"obj:{o.name}" for level in site.world.levels.values() for o in level.objects if o.pose.position.z > FLOOR_HEIGHT_M}
+    assert raised and not raised & set(floor_objects(site))
+    moved = {chain.site.edits[0].target for chain in generate(site, seed=0, per_type=10, types=[EditType.MOVE])}
+    assert moved and not moved & raised
