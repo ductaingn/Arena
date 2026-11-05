@@ -6,6 +6,7 @@ import copy
 import enum
 import hashlib
 import json
+import re
 import shutil
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -33,6 +34,8 @@ GRAPH = "flowgraph.yaml"
 EDITS = "edits.yaml"
 SEPARATOR = "__"
 ID_LENGTH = 8
+#: Longest readable part of an edited world's name (`describe`), the id after it keeps names unique.
+SLUG_LENGTH = 40
 SERVICE_KEYS = ("capacity", "interaction_radius")
 DWELL_KEYS = ("mean", "std", "clip_low", "clip_high")
 #: How an object is used (`affords`) is part of its demand: it moves with a left demand and goes with a cleared one.
@@ -110,9 +113,25 @@ class Site:
     edits: list[Edit] = attrs.field(factory=list)
 
     @property
-    def name(self) -> str:
-        """The world name: `base` for an unedited site, else `<base>__<last edit id>`."""
+    def key(self) -> str:
+        """The site's identity: `base` for an unedited site, else `<base>__<last edit id>`; an edit names its parent by it."""
         return f"{self.base}{SEPARATOR}{self.edits[-1].id}" if self.edits else self.base
+
+    @property
+    def name(self) -> str:
+        """The world name: `base` for an unedited site, else `<base>__<what the edits did>__<last edit id>`."""
+        return SEPARATOR.join((self.base, describe(self.edits), self.edits[-1].id)) if self.edits else self.base
+
+
+def describe(edits: Sequence[Edit]) -> str:
+    """What `edits` did, readable in a world name: the last edit's type, layout op, target and switched-on flags, after
+    the chain's length when it has more than one edit. Lowercase words joined by single underscores, at most SLUG_LENGTH."""
+    last = edits[-1]
+    words = [last.type.value, str(last.params.get("op", "")), last.target.partition(":")[2] or last.target, *(k for k in FLAGS if last.params.get(k))]
+    if len(edits) > 1:
+        words.insert(0, f"{len(edits)}_edits")
+    slug = re.sub(r"[^a-z0-9]+", "_", "_".join(w for w in words if w).lower()).strip("_")
+    return slug[:SLUG_LENGTH].rstrip("_") or last.type.value
 
 
 def _load_world(root: Path) -> World:
@@ -601,7 +620,7 @@ def apply(site: Site, edit_type: EditType | str, target: str, params: Mapping[st
     """A new site: `site` with the edit applied and recorded, `site` itself unchanged."""
     if edit_type not in tuple(EditType):
         raise ValueError(f"edit type {edit_type!r} is not one of {', '.join(EditType)}")
-    edit = Edit(type=EditType(edit_type), target=target, params=dict(params or {}), parent=site.name)
+    edit = Edit(type=EditType(edit_type), target=target, params=dict(params or {}), parent=site.key)
     edited = _copy(site)
     OPERATIONS[edit.type](edited, edit)
     edited.world.validate()
