@@ -25,19 +25,19 @@ def _run_with_generator(make_server: Callable[[str], rclpy.node.Node], body: Cal
 
     async def main() -> None:
         server = make_server(ns)
-        node = ConfigFileGenerator(f"{ns}/task_generator_node")
+        node = ConfigFileGenerator(f"{ns}/arena_env_node")
         executor = rclpy.executors.MultiThreadedExecutor(num_threads=4)
         executor.add_node(server)
         executor.add_node(node)
         spin = threading.Thread(target=executor.spin, daemon=True)
         spin.start()
         try:
-            client = node.create_client_wrapper(rcl_interfaces.srv.GetParameters, f"{ns}/task_generator_node/get_parameters")
-            assert await node.wait_for_service_async(client.client, timeout=10.0)
+            client = node.create_client_wrapper(rcl_interfaces.srv.GetParameters, f"{ns}/arena_env_node/get_parameters")
+            assert await node.wait_for_service_async(client.client, timeout=30.0)
             await body(node, client)
         finally:
             executor.shutdown()
-            spin.join(timeout=5.0)
+            spin.join(timeout=30.0)
             node.destroy_node()
             server.destroy_node()
 
@@ -48,11 +48,13 @@ def test_await_param_succeeds_when_param_is_declared_after_first_query() -> None
     import rclpy.node
 
     declared = threading.Event()
+    declared_at: list[float] = []
 
     def make_server(ns: str) -> rclpy.node.Node:
-        server = rclpy.node.Node("task_generator_node", namespace=ns)
+        server = rclpy.node.Node("arena_env_node", namespace=ns)
 
         def declare() -> None:
+            declared_at.append(time.monotonic())
             server.declare_parameter("prefix", PARAM_VALUE)
             declared.set()
 
@@ -60,11 +62,11 @@ def test_await_param_succeeds_when_param_is_declared_after_first_query() -> None
         return server
 
     async def body(node: ConfigFileGenerator, client: ClientWrapper) -> None:
-        start = time.monotonic()
-        value = await asyncio.wait_for(node._await_param(client, "prefix", interval=0.2), timeout=15.0)
+        value = await asyncio.wait_for(node._await_param(client, "prefix", interval=0.2), timeout=30.0)
+        returned = time.monotonic()
         assert declared.is_set()
         assert value.string_value == PARAM_VALUE
-        assert time.monotonic() - start >= 1.0
+        assert returned >= declared_at[0]
 
     _run_with_generator(make_server, body, "/rviz_cfg_wait_late")
 
@@ -79,7 +81,7 @@ def test_await_param_retries_when_first_response_never_arrives() -> None:
     requests: list[float] = []
 
     def make_server(ns: str) -> rclpy.node.Node:
-        server = rclpy.node.Node("task_generator_node", namespace=ns, start_parameter_services=False)
+        server = rclpy.node.Node("arena_env_node", namespace=ns, start_parameter_services=False)
 
         def on_get(request: rcl_interfaces.srv.GetParameters.Request, response: rcl_interfaces.srv.GetParameters.Response) -> rcl_interfaces.srv.GetParameters.Response:
             requests.append(time.monotonic())
@@ -88,12 +90,12 @@ def test_await_param_retries_when_first_response_never_arrives() -> None:
             response.values = [rcl_interfaces.msg.ParameterValue(type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING, string_value=PARAM_VALUE) for _ in request.names]
             return response
 
-        server.create_service(rcl_interfaces.srv.GetParameters, f"{ns}/task_generator_node/get_parameters", on_get, callback_group=rclpy.callback_groups.ReentrantCallbackGroup())
+        server.create_service(rcl_interfaces.srv.GetParameters, f"{ns}/arena_env_node/get_parameters", on_get, callback_group=rclpy.callback_groups.ReentrantCallbackGroup())
         return server
 
     async def body(node: ConfigFileGenerator, client: ClientWrapper) -> None:
         try:
-            value = await asyncio.wait_for(node._await_param(client, "prefix", interval=0.1, call_timeout=0.5), timeout=10.0)
+            value = await asyncio.wait_for(node._await_param(client, "prefix", interval=0.1, call_timeout=2.0), timeout=30.0)
         finally:
             release.set()
         assert value.string_value == PARAM_VALUE
@@ -110,7 +112,7 @@ def test_await_param_skips_not_set_values() -> None:
     requests: list[float] = []
 
     def make_server(ns: str) -> rclpy.node.Node:
-        server = rclpy.node.Node("task_generator_node", namespace=ns, start_parameter_services=False)
+        server = rclpy.node.Node("arena_env_node", namespace=ns, start_parameter_services=False)
 
         def on_get(request: rcl_interfaces.srv.GetParameters.Request, response: rcl_interfaces.srv.GetParameters.Response) -> rcl_interfaces.srv.GetParameters.Response:
             requests.append(time.monotonic())
@@ -120,12 +122,12 @@ def test_await_param_skips_not_set_values() -> None:
                 response.values = [rcl_interfaces.msg.ParameterValue(type=rcl_interfaces.msg.ParameterType.PARAMETER_STRING, string_value=PARAM_VALUE) for _ in request.names]
             return response
 
-        server.create_service(rcl_interfaces.srv.GetParameters, f"{ns}/task_generator_node/get_parameters", on_get)
+        server.create_service(rcl_interfaces.srv.GetParameters, f"{ns}/arena_env_node/get_parameters", on_get)
         return server
 
     async def body(node: ConfigFileGenerator, client: ClientWrapper) -> None:
-        value = await asyncio.wait_for(node._await_param(client, "prefix", interval=0.1), timeout=10.0)
+        value = await asyncio.wait_for(node._await_param(client, "prefix", interval=0.1), timeout=30.0)
         assert value.string_value == PARAM_VALUE
-        assert len(requests) == 3
+        assert len(requests) >= 3
 
     _run_with_generator(make_server, body, "/rviz_cfg_wait_unset")

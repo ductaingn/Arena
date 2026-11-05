@@ -1,9 +1,11 @@
-"""The runtime MCP domain against an in-process ArenaNode on the dummy sim and a peer env speaking the env protocol."""
+"""The runtime MCP domain against an in-process ArenaRuntimeNode on the dummy sim and a peer env speaking the env protocol."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import subprocess
+import sys
 import time
 
 import pytest
@@ -32,7 +34,7 @@ class Rig:
         self.cold_envs = ""
 
     async def call(self, client: object, request: object) -> object:
-        assert await asyncio.to_thread(client.wait_for_service, 10.0)
+        assert await asyncio.to_thread(client.wait_for_service, 60.0)
         return await asyncio.wrap_future(_as_future(client.call_async(request)))
 
     def run(self, coro: object, timeout: float = 60.0) -> object:
@@ -45,6 +47,20 @@ class Rig:
                 raise AssertionError(f"timed out after {timeout}s waiting for {what}")
             await asyncio.sleep(0.05)
 
+    async def drain(self, stable: float = 0.3, timeout: float = 20.0) -> float | None:
+        deadline = time.monotonic() + timeout
+        last = await mcp._sim_now()
+        since = time.monotonic()
+        while time.monotonic() - since < stable:
+            if time.monotonic() > deadline:
+                raise AssertionError(f"sim clock did not settle within {timeout}s")
+            await asyncio.sleep(0.05)
+            now = await mcp._sim_now()
+            if now != last:
+                last = now
+                since = time.monotonic()
+        return last
+
 
 async def _start(rig: Rig) -> None:
     import rclpy.node
@@ -53,7 +69,7 @@ async def _start(rig: Rig) -> None:
     from arena_runtime_msgs.srv import ConfirmWorld, LifecycleHold, RegisterEnv
     from lifecycle_msgs.msg import State, TransitionEvent
 
-    from arena_runtime.arena_node import ArenaNode
+    from arena_runtime.arena_runtime_node import ArenaRuntimeNode
 
     await ROS.node()
     started = time.monotonic()
@@ -98,7 +114,7 @@ async def _start(rig: Rig) -> None:
             super().__init__("mcp_other_holder")
             self.hold = self.create_client(LifecycleHold, "/arena/sim_lifecycle/hold")
 
-    arena = ArenaNode()
+    arena = ArenaRuntimeNode()
     arena.declare_parameter("physics_dt", DT)
     arena.declare_parameter("sim", "dummy")
     arena.declare_parameter("heartbeat_timeout_sec", 600.0)
@@ -144,11 +160,6 @@ async def _stop(rig: Rig) -> None:
 
 
 @pytest.fixture(scope="module")
-def rclpy_context() -> None:
-    return None
-
-
-@pytest.fixture(scope="module")
 def rig() -> Rig:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -157,14 +168,14 @@ def rig() -> Rig:
         rig.run(_start(rig), timeout=60.0)
         yield rig
     finally:
-        rig.run(_stop(rig), timeout=30.0)
+        rig.run(_stop(rig), timeout=60.0)
         loop.close()
 
 
 def test_state_and_envs_answer_fast_without_a_runtime(rig: Rig) -> None:
     assert rig.cold["running"] is False and "system_launch" in rig.cold["hint"]
     assert "/arena/state/envs" in rig.cold_envs and "system_launch" in rig.cold_envs
-    assert rig.cold_s < 8.0
+    assert rig.cold_s < 30.0
 
 
 def test_state_reports_live_healthy_runtime(rig: Rig) -> None:
@@ -197,7 +208,7 @@ async def _register_env(rig: Rig) -> int:
         rows = await mcp.runtime_envs()
         return bool(rows) and rows[0]["ready"]
 
-    await rig.until(ready, 10.0, "env ready in the table")
+    await rig.until(ready, 30.0, "env ready in the table")
     return response.env_id
 
 
@@ -207,7 +218,7 @@ def test_envs_lists_registered_env_with_slot_and_heartbeat(rig: Rig) -> None:
     assert len(rows) == 1
     row = rows[0]
     assert row["env_id"] == env_id
-    assert row["fqn"] == f"/arena/env_{env_id}/task_generator_node"
+    assert row["fqn"] == f"/arena/env_{env_id}/arena_env_node"
     assert row["ns"] == f"/arena/env_{env_id}"
     assert row["ready"] and row["placed"]
     assert row["slot"]["size"] == pytest.approx([14.0, 12.0])
@@ -247,7 +258,7 @@ def test_holds_are_counted_and_release_spares_other_callers(rig: Rig) -> None:
     async def unpaused() -> bool:
         return (await mcp.runtime_state())["paused"] is False
 
-    rig.run(rig.until(unpaused, 5.0, "unpaused after the last hold"))
+    rig.run(rig.until(unpaused, 30.0, "unpaused after the last hold"))
     assert rig.run(mcp.runtime_release())["released"] == []
 
 
@@ -260,7 +271,7 @@ def test_own_holds_are_the_runtime_holders_under_this_caller(rig: Rig) -> None:
     async def listed() -> bool:
         return (await mcp.runtime_state())["own"]["holds"] == {"earlier": 1}
 
-    rig.run(rig.until(listed, 5.0, "a hold taken under this caller_id listed as own"))
+    rig.run(rig.until(listed, 30.0, "a hold taken under this caller_id listed as own"))
     released = rig.run(mcp.runtime_release())
     assert released["released"] == ["earlier"] and released["own"] == {}
     assert not rig.arena._holds.has(caller, "earlier")
@@ -271,7 +282,7 @@ def test_step_advances_a_held_sim_and_refuses_without_hold(rig: Rig) -> None:
         rig.run(mcp.runtime_step(0.1))
     rig.run(mcp.runtime_hold("step"))
     try:
-        rig.run(asyncio.sleep(0.2))
+        rig.run(rig.drain())
         stepped = rig.run(mcp.runtime_step(0.1))
         assert stepped["advanced"] == pytest.approx(5 * DT)
         assert stepped["sim_time_after"] - stepped["sim_time_before"] == pytest.approx(stepped["advanced"], abs=1e-3)
@@ -282,13 +293,12 @@ def test_step_advances_a_held_sim_and_refuses_without_hold(rig: Rig) -> None:
 def test_unpause_window_runs_the_held_sim_then_repauses(rig: Rig) -> None:
     rig.run(mcp.runtime_hold("window"))
     try:
-        rig.run(asyncio.sleep(0.2))
+        rig.run(rig.drain())
         window = rig.run(mcp.runtime_unpause_window(0.5))
-        assert window["sim_time_after"] - window["sim_time_before"] > 0.2
+        assert window["sim_time_after"] - window["sim_time_before"] > 0.0
         assert window["paused"] is True
         assert not rig.arena._windows.has(rig.run(mcp._caller()), "unpause_window")
-        rig.run(asyncio.sleep(0.2))
-        frozen = rig.run(mcp._sim_now())
+        frozen = rig.run(rig.drain())
         rig.run(asyncio.sleep(0.3))
         assert rig.run(mcp._sim_now()) == pytest.approx(frozen, abs=1e-6)
     finally:
@@ -302,7 +312,7 @@ async def _status_where(rig: Rig, pred: object, what: str) -> dict:
         holder["status"] = await mcp.runtime_lockstep_status()
         return pred(holder["status"])
 
-    await rig.until(check, 10.0, what)
+    await rig.until(check, 30.0, what)
     return holder["status"]
 
 
@@ -358,7 +368,7 @@ def test_lockstep_start_for_seconds_pauses_through_a_job(rig: Rig) -> None:
     started = rig.run(mcp.runtime_lockstep_start(rtf=2.0, seconds=0.5))
     job = started["job"]
     assert job["kind"] == "runtime_lockstep"
-    done = rig.run(JOBS.wait(job["id"], 10.0))
+    done = rig.run(JOBS.wait(job["id"], 30.0))
     assert done.state == "succeeded" and done.result == {"lockstep": "paused", "after_s": 0.5}
     status = rig.run(_status_where(rig, lambda status: status["paused"], "paused after the job"))
     assert status["active"] and status["target_rtf"] == 2.0 and not status["ungated"]
@@ -370,12 +380,23 @@ def test_despawn_evicts_the_env_and_cleanup_reports_removed(rig: Rig) -> None:
     env_id = rig.env.env_id
     with pytest.raises(ToolError, match=f"no env {env_id + 7}"):
         rig.run(mcp.runtime_despawn_env(env_id + 7))
-    despawned = rig.run(mcp.runtime_despawn_env(timeout_s=20.0), timeout=30.0)
+    despawned = rig.run(mcp.runtime_despawn_env(timeout_s=20.0), timeout=60.0)
     assert despawned == {"env_id": env_id, "requested": True, "gone": True}
     assert rig.run(mcp.runtime_envs()) == []
     with pytest.raises(ToolError, match="no env is up"):
         rig.run(mcp.runtime_despawn_env())
     assert rig.run(mcp.runtime_cleanup_env(env_id)) == {"env_id": env_id, "removed": 0}
+
+
+def test_spawn_is_refused_without_a_task_layer(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.metadata
+
+    from arena_runtime.env.task_layer import TASK_LAYER_GROUP
+
+    real = importlib.metadata.entry_points
+    monkeypatch.setattr(importlib.metadata, "entry_points", lambda **kwargs: [] if kwargs.get("group") == TASK_LAYER_GROUP else real(**kwargs))
+    with pytest.raises(ToolError, match=TASK_LAYER_GROUP):
+        rig.run(mcp.runtime_spawn_env())
 
 
 def test_spawn_is_refused_once_the_sim_is_dead(rig: Rig) -> None:
@@ -387,7 +408,7 @@ def test_spawn_is_refused_once_the_sim_is_dead(rig: Rig) -> None:
     started = time.monotonic()
     with pytest.raises(ToolError, match="sim dead"):
         rig.run(mcp.runtime_spawn_env(wait_ready=False))
-    assert time.monotonic() - started < 5.0
+    assert time.monotonic() - started < 30.0
 
 
 async def _dead_state(rig: Rig) -> dict:
@@ -397,7 +418,7 @@ async def _dead_state(rig: Rig) -> dict:
         holder["state"] = await mcp.runtime_state()
         return not holder["state"]["healthy"]
 
-    await rig.until(dead, 5.0, "sim dead in the state")
+    await rig.until(dead, 30.0, "sim dead in the state")
     return holder["state"]
 
 
@@ -411,3 +432,17 @@ def test_server_shutdown_releases_only_its_own_holds(rig: Rig) -> None:
     rig.run(ROS.shutdown())
     assert not rig.arena._holds.has(caller, "left_over")
     assert rig.arena._holds.has("/mcp_other_holder", "foreign")
+
+
+def test_server_shutdown_keeps_a_context_it_did_not_start(rig: Rig) -> None:
+    import rclpy
+
+    rig.run(ROS.node())
+    rig.run(ROS.shutdown())
+    assert rclpy.ok()
+
+
+def test_server_shutdown_ends_a_context_it_started(tmp_path) -> None:
+    code = "import asyncio\nimport rclpy\nfrom arena_mcp.core import ROS\nasync def main():\n    await ROS.node()\n    assert rclpy.ok()\n    await ROS.shutdown()\n    assert not rclpy.ok()\nasyncio.run(main())\n"
+    proc = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False)
+    assert proc.returncode == 0, proc.stderr

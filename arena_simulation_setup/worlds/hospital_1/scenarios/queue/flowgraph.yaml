@@ -354,6 +354,8 @@ entities:
 - {id: 'interaction:SIT_ON'}
 - {id: 'service:patient_bed'}
 - {id: 'interaction:LIE_ON'}
+- {id: 'schedule:fire_alarm'}
+- {id: 'regime:alarm'}
 facts:
 - {subject: 'room:patient_ward', verb: contains, object: 'obj:ward_SM_MedicalCabinet_01a_2'}
 - {subject: 'floor:0', verb: contains, object: 'room:central_hallway', source: derived}
@@ -1310,4 +1312,5 @@ facts:
   verb: affords
   object: interaction:LIE_ON
   params: {from: 'rule:prone'}
+- {subject: 'schedule:fire_alarm', verb: asserts, object: 'regime:alarm'}
 constraints: []

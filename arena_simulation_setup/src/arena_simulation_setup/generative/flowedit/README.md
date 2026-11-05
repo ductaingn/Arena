@@ -1,6 +1,6 @@
 # FLOWEDIT graph
 
-One graph per site with each object's demand on its node: what each object is for. It is a [KG](../../../../AUTHORING.md#kg) scene (`arena-kg/1`) over `core@2`, `space@1` and [`flow@1`](../../kg/packages/flow@1.toml), kept in its own `flowgraph.yaml`, never in the world's `kg.yaml`. Edits change it, a forecaster reads it, simulators never read it. Persons stay in agent types.
+One graph per site with each object's demand on its node, what each object is for, and each door's access. It is a [KG](../../../../AUTHORING.md#kg) scene (`arena-kg/1`) over `core@2`, `space@1` and [`flow@1`](../../kg/packages/flow@1.toml), kept in its own `flowgraph.yaml`, never in the world's `kg.yaml`. Edits change it, a forecaster reads it, simulators never read it. Persons stay in agent types.
 
 ```
 world.yaml (geometry)          --+
@@ -9,17 +9,31 @@ kg.yaml (room purposes, read)  --+                              +-- read --> sce
                                          crowd settings + seed -+
 ```
 
-`build` turns a hand-authored scenario into its graph, `read` turns a graph back into a scenario with no hand-written person: edit the graph (move an object, change a dwell) and read it again.
+`build` turns a hand-authored scenario into its graph, `edit` changes a site and saves it as a new world, `read` turns a site back into a scenario with no hand-written person.
 
 ## CLI
 
 `flowedit build <world> [<scenario>]`, or `python3 -m arena_simulation_setup.generative.flowedit.cli build ...`. A dry run prints the graph, `--write` writes it to `flowgraph.yaml` next to the scenario's `scenario.yaml` (or `--out`). Worlds resolve as in [generative/scenario](../scenario/README.md#cli).
 
-`flowedit read <world> [<scenario>]` reads `scenarios/<scenario>/flowgraph.yaml` (or `--graph`) into `scenarios/flowedit_<scenario>/` (or `--name`). A dry run prints the scenario, `--write` writes it and replaces only a scenario carrying the generated marker unless `--force`. `--settings` names a crowd settings file, `--count`, `--scale` and `--local-planner` override it, `--seed` (default 0) keys every draw.
+`flowedit read <world> [<scenario>]` [reads](#reading-a-site) the site of a shipped world and scenario, or of a world `flowedit edit` saved, into `<world>/scenarios/flowedit_<scenario>/` (or `--name`). A dry run prints the scenario, `--write` writes it and replaces only a scenario carrying the generated marker unless `--force`. `--settings` names a crowd settings file, `--count`, `--scale` and `--local-planner` override it, `--seed` (default 0) keys every draw.
 
 ```bash
 flowedit build hospital_1 queue --write
 flowedit read hospital_1 queue --settings crowd.yaml --seed 3 --write
+flowedit read hospital_1__b6b7b494 --settings crowd.yaml --seed 3 --write
+```
+
+`flowedit edit <world> <type> <target> [-p KEY=VALUE ...] [--scenario <scenario>]` applies one [edit](#edits). A dry run prints the edit record and the world name, `--write` saves the world. `-p` reads VALUE as YAML and nests dotted keys (`-p satisfies.thirst=80`). An edited world is edited again by its name; its scenario and seed come from its `edits.yaml`.
+
+```bash
+flowedit edit hospital_1 move obj:fountain --scenario queue -p x=15 -p y=11.5 --write
+flowedit edit hospital_1__b6b7b494 layout door:or_door -p op=remove --write
+```
+
+`flowedit generate <world> [--scenario <scenario>] [--seed N] [--per-type K] [--steps N] [--types move,...] [--controls]` samples edits with the [generator](#generator). A dry run prints the manifest, `--write` saves every edited world and writes the manifest to `$ARENA_ASSETS_DIR_LOCAL/flowedit/<world>__seed<seed>.yaml` (or `--manifest`).
+
+```bash
+flowedit generate hospital_1 --scenario queue --seed 0 --controls --write
 ```
 
 ## Graph
@@ -32,6 +46,9 @@ flowedit read hospital_1 queue --settings crowd.yaml --seed 3 --write
 | `obj` demand | `serves service:<type> {capacity, interaction_radius}`, `satisfies need:<need> {amount}`, `has_formation formation:<type> {<params>, anchor_kind, anchor_ref}` | the object's `humansim:` block |
 | `obj` dwell | `dwells <mean s> {std, clip_low, clip_high, from}` | the `duration` of the first agent type step whose `target` is the object's name, else its type, else of the interaction a `go_to` to it leads into |
 | `obj` use | `affords interaction:<KIND> {from, meet, tag, offer, seek}`, `satisfies need:<need> {amount, from}` | [`interactions.py`](interactions.py): the agent type steps that use the object, else its `humansim:` block against HumanSim's interaction registry |
+| `obj:<name>_demand` | no `model`: only `at` and the demand facts `<name>` had | a `move` with `leave_demand` (the `moved_without_demand` control); its `affords` go with it |
+| `door` access | `gated <locked>`, `authorizes <name>` per authorized name, `unlocks_on regime:<regime>` | the door's `gate` preset |
+| `schedule:<name>` | `asserts regime:<regime> {default}`, `window <start s> {end, value}` per window | the world's `schedules:` |
 
 `contains` and `connects` are derived as when a world's KG loads. Unlike `kg.yaml`, the graph carries each object's `model` and pose, a copy of `world.yaml` that `flowedit build` refreshes; rooms and doors carry no geometry. Poses are in the level frame. A scenario object posed at a zone name gets the point the runtime would sample under `--seed`, and keeps the name as `pose_ref`. Dwell is read from the scenario-local agent type files (`./<type>.yaml`) its humans and regions name, and a note names other steps that give the same object another duration. `seats` and formations anchored at a pose are not in `flow@1`.
 
@@ -55,24 +72,116 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 - {subject: 'obj:patient_bed_1', verb: affords, object: 'interaction:LIE_ON', params: {from: 'rule:prone'}}
 ```
 
-## Reading a graph
+## Edits
 
-[`read.py`](read.py) needs the graph, the world it is for (zones, doors and furniture for geometry only), crowd settings and a seed, and is deterministic in all four.
+[`edit.py`](edit.py) has one operation per edit type. Each changes the graph and the world's geometry together, then recomputes `contains` and `connects`. A **site** is a world without its scenario objects, plus its graph (`open_site`). `apply(site, type, target, params)` returns a new site and leaves the old one unchanged. `save(site)` writes it.
 
-| Graph | Scenario |
+| Type | Target | Params | Graph | `world.yaml` |
+|---|---|---|---|---|
+| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged), `leave_demand: true` (the demand stays at the old spot) | `at`; with `leave_demand` the demand facts go to a new `obj:<name>_demand` at the old pose | the pose, for a world object, its height, roll and pitch kept; with `leave_demand` its `humansim:` block keeps only `seats` |
+| `insert` | `obj:<new name>` | `model`, `x`, `y`, `z` (0), `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
+| `remove` | `obj:<name>` | none | the entity and every fact about it | the object, and its `kg.yaml` entity |
+| `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`, `clear: true` (first drop all demand, the formation included) | `serves`, `satisfies`, `dwells` (`from: edit:<id>`), `has_formation` (by `clear`) | the `humansim:` block, for a world object |
+| `access` | `door:<name>` | `locked`, `authorized`, `unlock_on`, or `remove: true` | access facts | the door's `gate` preset (new gates start unlocked) |
+| `access` | `schedule:<name>` | `regime`, `windows`, `default`, or `remove: true` | access facts | the `schedules:` entry |
+| `layout` | `door:<name>` | `op: add` (`level`, `span`, door fields), `move` (default: `span` or `offset: [dx, dy]`, door fields), `remove` | the door entity | the door |
+| `layout` | `wall:<level>/<index>`, `wall:<level>` to add | `op: add` (`path`, `closed`, `kind`, `material`), `move` (`path` or `offset`), `remove` | none | the `walls:` path at that index |
+
+- **Scenario objects** (the fountain of `queue`) change only in the graph. The [reader](#reading-a-site) writes them into the scenario.
+- **Demand-only nodes** (`obj:<name>_demand`, an object without `model`) also live only in the graph. The reader writes each as a PEDS target without an obstacle (`model: ""`). A formation anchored at `<name>` by name is anchored at the new node. They can be moved, removed and given another function like any graph object; the generator never moves or copies them, having no model.
+- **Doors:** a moved or added door must lie on a wall. A door moved or removed from a gap left in its wall gets the gap closed with a wall styled like the wall at its start. Walls drawn through a door are cut at runtime anyway.
+- **Walls:** only `walls:` paths count. Walls from a zone's `walls: outline` are not addressable.
+- **Checks** stay basic: unknown target, taken name, door off a wall, then `World.validate` and the graph's vocabulary. Rules about rooms or overlap belong to the edit generator.
+
+`save` writes the world to the writable local root (`$ARENA_ASSETS_DIR_LOCAL/worlds`, see [worlds/README.md](../../../../worlds/README.md#how-worldidentifier-resolves-a-name)) as `<base>__<id>`. `<id>` is a hash of the last edit's record, with ints read as floats and false flags (`leave_demand`, `clear`, `remove`) left out. The record names its parent world, so the hash also names the whole chain. The save copies the source world's `assets/`, and writes `flowgraph.yaml` and `edits.yaml` next to `world.yaml`. The scenarios are not copied.
+
+```yaml
+format: flowedit-edits/1
+base: hospital_1
+scenario: queue
+seed: 0
+edits:
+- {id: b6b7b494, parent: hospital_1, type: move, target: 'obj:fountain', params: {x: 15, y: 11.5}}
+- {id: b9f2feba, parent: hospital_1__b6b7b494, type: layout, target: 'door:or_door', params: {op: remove}}
+```
+
+## Generator
+
+[`generate.py`](generate.py) samples edits of every type on a site from a seed. `generate(site, seed, per_type, steps, types)` makes, per type, `per_type` chains of up to `steps` edits (default one), each starting with an edit of that type; later steps draw their type from `types`, and a drawn type with no edit (a function edit once the only object with a need is gone) gives way to the others. Each step draws a proposal, `apply` checks it, and a refused one is drawn again, up to `MAX_TRIES`. A site with nothing to edit, or no valid proposal, gives a note instead, which names the last refusal. A chain whose first edit fails is left out; one whose later step finds no edit of any type ends there.
+
+- **Determinism:** one `random.Random` per step, keyed by the current world's name (which names the chain so far), the scenario, seed, step, type and index. Candidates are sorted before every draw and spots rounded to cm, so the same site, seed and code give the same edits and a shorter chain is a prefix of a longer one. No two chains reach the same world at the same step: a duplicate is drawn again, and that retry may take any object, not only one with a need. Footprints come from asset bounds where they resolve, else a 0.8 m box, so a machine with other assets at hand can draw other spots; the manifest carries `generator_version`.
+- **On the floor:** spots are drawn on the floor, so a world object standing higher than 5 cm (on a table, a shelf or a wall) is neither moved nor copied.
+- **Spots** (`move`, `insert`): inside an allowed zone (not a stair, elevator, lift or shaft), the footprint clear of the zone's edge, walls, door spans (0.8 m) and, by 0.3 m, every object's footprint. A moved object's own old footprint counts too, so the inert copy of its control never overlaps the original.
+
+| Type | Target | Params drawn |
+|---|---|---|
+| `move` | an object on the floor, one with a need (`satisfies`) first | a spot in its own room 0.5-3 m away (`scope: local`, 30 %), else in another room of its level (`scope: room`) |
+| `insert` | `obj:gen_<model>_<n>`, a copy of an object on the floor, one with a need first | a spot in any room of its level (`scope: room`), the source's demand copied (service, needs, dwell) |
+| `remove` | an object, one with a need first | none |
+| `function` | an object with a need | `capacity`: a new value in the type's range (`CAPACITY`), objects whose type others share first, none with capacity 0. Or `dwell`: a new mean in the type's range (`DWELL_S`, 3-20 s for dispensers), the authored spread scaled to it, only on the sole object for its need |
+| `access` | a door whose rooms keep another door, a gated door, or a schedule with a regime | lock a door; unlock or ungate a gated one; a schedule window |
+| `layout` | a door | move it 0.5-2 m along its wall; add a 1.5 m door on a wall between two rooms; remove one whose rooms keep another door |
+
+Only objects with a need count as demand: in PEDS only needs send people to an object. `dwell` reaches PEDS through the reader, which writes it as the `duration` of the step at the object. The reader takes one dwell per need, hence the sole-object rule. `satisfies` is not drawn yet. `FIELDS` lists what is drawn and goes into the manifest. Wall paths are not drawn.
+
+**Controls** (`controls(site, chain)`, `--controls`): a function-carrying move or insert gets geometry-only controls, applied to the chain's base, in which only the footprint changes:
+
+| Control | Edit | Result |
+|---|---|---|
+| `inert_object` | `insert obj:<name>_inert` (move or insert) | the same model without demand at the edit's spot, the original left in place |
+| `moved_without_demand` | `move obj:<name>` with `leave_demand: true` (move only) | the model at the edit's spot, its demand at the old spot on `obj:<name>_demand` |
+
+Only a chain's first edit has controls. An object without `humansim.type` takes its type from its asset's `annotation.yaml` at runtime, so the inert copy, and the moved model of `moved_without_demand`, may still be a target by that name.
+
+The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type`, `target`, `id`, `function_carrying`, `scope`), its saved path and its controls:
+
+```yaml
+format: flowedit-generated/1
+generator_version: 2
+base: hospital_1
+scenario: queue
+seed: 0
+per_type: 1
+steps: 1
+fields: [capacity, dwell]
+chains:
+- world: hospital_1__1a2b3c4d
+  edits:
+  - {type: move, target: 'obj:fountain', id: 1a2b3c4d, function_carrying: true, scope: room}
+  path: /…/worlds/hospital_1__1a2b3c4d
+  controls:
+  - {kind: inert_object, world: hospital_1__5e6f7a8b, ids: [5e6f7a8b], path: /…/worlds/hospital_1__5e6f7a8b}
+  - {kind: moved_without_demand, world: hospital_1__9c0d1e2f, ids: [9c0d1e2f], path: /…/worlds/hospital_1__9c0d1e2f}
+```
+
+## Reading a site
+
+[`read.py`](read.py) reads a site from `open_site` (a shipped world and scenario, or a world `flowedit edit` saved), crowd settings and a seed into a scenario in the site's world, deterministic in all three. FLOWEDIT compares a run before an edit with a run after it, so the two may differ only by the edit:
+
+- **The people** (count, kind, speed, start room, route, idle points) come from the unedited base world (`site.base`), its graph, the settings and the seed alone, through populate's public `crowd`. Every edit of `hospital_1` gets the people of `hospital_1`.
+- **The binding** (objects, which object serves which need, the dwell, the entrances) comes from the edited site.
+
+| Site | Scenario |
 |---|---|
-| objects the world does not hold (`at`, `serves`, `has_formation`, `satisfies` without `from`) | `objects:` with their `humansim:` block at the graph's point, in the map frame. A world object the graph moved is refused: a scenario cannot move it |
+| objects the world does not hold (`at`, `serves`, `has_formation`, `satisfies`) | `objects:` with their `humansim:` block at the graph's point, in the map frame. A world object whose graph pose differs from `world.yaml` is refused: a scenario cannot move it, `flowedit edit` moves both |
+| an object without `model` (`obj:<name>_demand`) | an object with `model: ""`: a HumanSim target with its demand, no obstacle in the simulator and none on the sampling grid |
 | `satisfies need:<n>` of an object people can use | every person's type declares `n` and preempts into `seek_<n>` once it falls below `below` |
-| `affords` | the `seek_<n>` step: the kind at the object, or with `meet` a `go_to` to it and the kind beside it. `SERVICE` needs a provider and is not sought |
+| `affords` | the `seek_<n>` step: the kind at the object, or with `meet` a `go_to` to it and the kind beside it. An object without `affords` is used as the objects of its service type are, else by rule. `SERVICE` needs a provider and is not sought |
 | `dwells` | that step's `duration`, its `patience` shifted by the dwell's upper bound so a use never runs out mid-use |
-| `has_purpose` of rooms | where people start and the rooms they walk between, by populate's rules (homes screened against the robot's route) |
+| `has_purpose` of the base world's rooms | where people start and the rooms they walk between, by populate's rules |
 | a door only one room contains | `<door>_source` behind `<door>_sink` inside it: visitors enter, walk, use, and leave through the sink |
 
-People are HumanSim behavior trees: each gets its own type (`types/flow__<name>.yaml`, extending its populate mix type) whose `idle` sequence walks free points drawn in its rooms, since a tree does not follow scenario waypoints. A need several objects serve is sought by their type (HumanSim takes the nearest) when they are all the objects of that type, else at one of them. With `synthesize_needs` (off by default), an object that satisfies no need gets `visit_<type>`, so every usable object is used; in HumanSim a crowd seeking a capacity-1 seat waits where it stands, so use it with few people or low rates. The robot comes from the settings, else the first hand-written scenario of the world whose route plans, else the two farthest zones. People walk the first level with zones. `provenance.yaml` holds the graph hash, the full settings, the plan of every need and the notes.
+People are HumanSim behavior trees: each gets its own type (`types/flow__<name>.yaml`, extending its populate mix type) whose `idle` sequence walks free points drawn in its rooms of the base world, since a tree does not follow scenario waypoints. One step serves a need (HumanSim holds the dwell on the step), so the objects that satisfy one need must share their kind and dwell, and several of them are sought by a service type that they, and nothing else on the floor, have (HumanSim takes the nearest); anything else is an error until HumanSim holds the dwell on the object. With `synthesize_needs` (off by default), an object that satisfies no need gets `visit_<type>`, so every usable object is used; in HumanSim a crowd seeking a capacity-1 seat waits where it stands, so use it with few people or low rates. There is no robot unless the settings name one (`robot:`). People walk the first level with zones. `provenance.yaml` holds the world, its base and edits, the graph hash, the full settings, the plan of every need and the notes.
+
+```bash
+flowedit edit hospital_1 function obj:fountain --scenario queue -p dwell=20 --write   # saves hospital_1__<id>
+flowedit read hospital_1 queue --write                  # hospital_1/scenarios/flowedit_queue/
+flowedit read hospital_1__<id> --write                  # the same people, the fountain's step 20 s
+```
 
 ## Crowd settings
 
-Global, not per site: the same file gives a crowd on any graph. Every key and its default is in [`settings.py`](settings.py); a file sets only what it changes, an unknown key is an error. A need's own `initial`, `decay_rate` or `below` replaces the `"*"` entry's whole.
+Global, not per site: the same file gives a crowd on any graph. Every key and its default is in [`settings.py`](settings.py); a file sets only what it changes, an unknown key is an error. A distribution (`mean`, `std`, `clip_low`, `clip_high`) given in a file replaces the default one whole, so a raised mean never keeps the default's clips, and a mean outside its own clips is an error. A need's own `initial`, `decay_rate` or `below` replaces the `"*"` entry's.
 
 ```yaml
 count: 20                       # people at the start (default: populate's count for the rooms, times scale)
@@ -91,4 +200,6 @@ entrances: {rate: 0.1, max_concurrent: 6, max_total: 30}
 | `interactions.py` | how an object is used, from agent type steps and HumanSim's interaction registry |
 | `read.py` | graph + settings + seed to a scenario |
 | `settings.py` | crowd settings and their defaults |
-| `cli.py` | `flowedit build`, `flowedit read` |
+| `edit.py` | edit operations, sites, saving edited worlds |
+| `generate.py` | sampling edits from a seed, geometry-only controls, the manifest |
+| `cli.py` | `flowedit build`, `flowedit edit`, `flowedit generate`, `flowedit read` |

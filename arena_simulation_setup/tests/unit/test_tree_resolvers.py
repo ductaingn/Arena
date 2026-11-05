@@ -204,6 +204,15 @@ def test_providers_drops_empty_segments():
         del os.environ[var]
 
 
+def test_providers_default_entry_stands_for_the_family_bucket():
+    var = '_ARENA_TEST_PROVIDERS_DEFAULT_ENTRY'
+    os.environ[var] = 'default,private'
+    try:
+        assert providers(var, 'family-public') == ['family-public', 'private']
+    finally:
+        del os.environ[var]
+
+
 def test_providers_blank_env_value_falls_back_to_default():
     """The shell exports the override slot blank, which must not read as 'no buckets'."""
     var = '_ARENA_TEST_PROVIDERS_BLANK'
@@ -263,6 +272,43 @@ def test_net_listing_args_uses_children_and_prefix_for_unannotated_payloads():
     assert prefixed[-3:] == ['list', '--children', 'suites']
 
 
+def test_net_listing_args_filter_children_by_contained_file():
+    from arena_simulation_setup.tree import NetResolver
+    from arena_simulation_setup.tree.World import WorldIdentifier
+
+    argv = NetResolver(WorldIdentifier, provider='b', annotated=False, list_containing='world.yaml')._listing_args()
+    assert argv[-3:] == ['--children', '--containing', 'world.yaml']
+
+
+def test_net_provider_turned_off_misses_without_a_subprocess_and_hides_its_cache(tmp_path):
+    entry = tmp_path / 'b' / 'w'
+    entry.mkdir(parents=True)
+    (entry / '.ttl').write_text(str(int(time.time())))
+    script = textwrap.dedent(
+        """
+        import asyncio
+        from arena_simulation_setup.tree import NetResolver
+        from arena_simulation_setup.tree.World import WorldIdentifier
+
+        class Refused(NetResolver):
+            @classmethod
+            async def check_output_async(cls, args, **kwargs):
+                raise AssertionError(args)
+
+        resolver = Refused(WorldIdentifier, provider='b', annotated=False)
+        print(asyncio.run(resolver.resolve(WorldIdentifier('w'))), asyncio.run(resolver.locate(WorldIdentifier('w'))))
+        print(list(resolver.listall(network=True)), asyncio.run(resolver.listall_async(network=True)))
+        """
+    )
+    env = {**os.environ, 'ARENA_ASSETS_DIR': str(tmp_path), 'ARENA_ASSETS_NET': 'off'}
+    done = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True, check=True)
+    assert done.stdout.splitlines()[-2:] == ['None None', '[] []']
+
+
+def test_fake_assets_turn_the_net_providers_off_for_children() -> None:
+    assert os.environ['ARENA_ASSETS_NET'] == 'off'
+
+
 def test_expired_net_entry_is_refetched_but_still_served_stale(tmp_path):
     entry = tmp_path / 'b' / 'w'
     entry.mkdir(parents=True)
@@ -281,6 +327,47 @@ def test_expired_net_entry_is_refetched_but_still_served_stale(tmp_path):
     done = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True, check=True)
     assert done.stdout.splitlines()[-2:] == ['True 1 False', 'True True']
     assert (entry / '.ttl').read_text() == '1'
+
+
+_COUNTING_FETCH = """
+import asyncio
+import subprocess
+import sys
+from arena_simulation_setup.tree import NetResolver
+from arena_simulation_setup.tree.World import WorldIdentifier
+
+class Counting(NetResolver):
+    calls = 0
+
+    @classmethod
+    async def check_output_async(cls, args, **kwargs):
+        Counting.calls += 1
+        if sys.argv[1] == 'unreachable':
+            raise subprocess.CalledProcessError(1, list(args))
+        return b''
+
+resolver = Counting(WorldIdentifier, provider='b', annotated=False)
+first = asyncio.run(resolver.resolve(WorldIdentifier('w')))
+second = asyncio.run(resolver.resolve(WorldIdentifier('w')))
+resolver.invalidate()
+third = asyncio.run(resolver.resolve(WorldIdentifier('w')))
+print(first, second, third, Counting.calls)
+"""
+
+
+def _resolve_thrice(tmp_path: Path, mode: str) -> str:
+    env = {**os.environ, 'ARENA_ASSETS_DIR': str(tmp_path)}
+    env.pop('ARENA_ASSETS_NET')
+    done = subprocess.run([sys.executable, '-c', _COUNTING_FETCH, mode], env=env, capture_output=True, text=True, check=True)
+    return done.stdout.splitlines()[-1]
+
+
+def test_net_entry_absent_from_the_provider_is_fetched_once_until_invalidated(tmp_path):
+    assert _resolve_thrice(tmp_path, 'absent') == 'None None None 2'
+
+
+def test_net_fetch_that_fails_is_retried_at_the_next_resolve(tmp_path):
+    assert _resolve_thrice(tmp_path, 'unreachable') == 'None None None 3'
 
 
 def test_arena_dynamic_path_reads_the_local_root_at_every_use_until_assigned(tmp_path: Path) -> None:

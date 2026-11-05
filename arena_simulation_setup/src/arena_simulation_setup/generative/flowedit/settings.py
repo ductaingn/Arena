@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,7 @@ DEFAULTS: dict[str, Any] = {
     "local_planner_params": {},
     # people entering through every exterior door and leaving through it again; rate 0 writes no regions
     "entrances": {"rate": 0.05, "max_concurrent": 4, "max_total": 15, "speed": {"min": 1.0, "max": 1.5}, "stops": 2},
-    # robot start and goal (zone names or [x, y(, yaw)]), null: copied from a hand-written scenario of the world
+    # the robot's route (`start`, `goal`, `phases` as a scenario writes them), null: a scenario without a robot
     "robot": None,
 }
 
@@ -50,6 +51,45 @@ class SettingsError(ValueError):
 #: Settings whose keys are free (need names, planner parameters, robot fields) rather than checked against the defaults.
 FREE = ("needs", "local_planner_params", "robot")
 NEED_KEYS = ("initial", "decay_rate", "below")
+#: Keys of a distribution. A distribution given in a settings file replaces the default one whole, so a raised mean never
+#: keeps the default's clips.
+RANGE_KEYS = ("mean", "std", "clip_low", "clip_high")
+
+
+def _is_range(value: object) -> bool:
+    return isinstance(value, Mapping) and "mean" in value and set(value) <= set(RANGE_KEYS)
+
+
+def _check_range(where: str, value: Mapping[str, Any]) -> None:
+    if unknown := sorted(set(value) - set(RANGE_KEYS)):
+        raise SettingsError(f"{where}: unknown keys {unknown}, a distribution has {list(RANGE_KEYS)}")
+    if "mean" not in value:
+        raise SettingsError(f"{where}: a distribution needs a mean, it replaces the default {where} whole")
+    try:
+        mean, std = float(value["mean"]), float(value.get("std", 0.0))
+        low, high = float(value.get("clip_low", -math.inf)), float(value.get("clip_high", math.inf))
+    except (TypeError, ValueError) as exc:
+        raise SettingsError(f"{where}: the values of a distribution are numbers") from exc
+    if std < 0:
+        raise SettingsError(f"{where}: std {std} is negative")
+    if low > high:
+        raise SettingsError(f"{where}: clip_low {low} is above clip_high {high}")
+    if not low <= mean <= high:
+        raise SettingsError(f"{where}: mean {mean} lies outside its own clip_low {low} and clip_high {high}")
+
+
+def _check_ranges(value: Mapping[str, Any], path: str = "") -> None:
+    """Every distribution of the settings, the need entries' included, checked on its own."""
+    for key, item in value.items():
+        where = f"{path}{key}"
+        if not path and key in FREE and key != "needs":
+            continue
+        if not isinstance(item, Mapping):
+            continue
+        if _is_range(item) or (path.startswith("needs.") and key in ("initial", "decay_rate")):
+            _check_range(where, item)
+        else:
+            _check_ranges(item, f"{where}.")
 
 
 def _merge(base: Mapping[str, Any], over: Mapping[str, Any], path: str = "", free: bool = False) -> dict[str, Any]:
@@ -58,7 +98,10 @@ def _merge(base: Mapping[str, Any], over: Mapping[str, Any], path: str = "", fre
         where = f"{path}{key}"
         if key not in out and not free:
             raise SettingsError(f"unknown crowd setting {where!r}, known: {sorted(out)}")
-        if isinstance(out.get(key), Mapping) and isinstance(value, Mapping):
+        if _is_range(out.get(key)) and isinstance(value, Mapping):
+            _check_range(where, value)
+            out[key] = copy.deepcopy(dict(value))
+        elif isinstance(out.get(key), Mapping) and isinstance(value, Mapping):
             out[key] = _merge(out[key], value, f"{where}.", free or (not path and key in FREE))
         else:
             out[key] = copy.deepcopy(value)
@@ -80,6 +123,7 @@ def load(source: str | Path | Mapping[str, Any] | None = None, **overrides: Any)
         raise SettingsError("count is a number of people, at least 0")
     if float(out["scale"]) < 0:
         raise SettingsError("scale is at least 0")
+    _check_ranges(out)
     return out
 
 

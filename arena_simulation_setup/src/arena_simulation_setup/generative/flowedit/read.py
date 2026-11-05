@@ -8,6 +8,11 @@
 | `dwells` | the `duration` of that step |
 | `has_purpose` of rooms | where people start and which rooms they walk between (populate's rules) |
 | doors in one room only | a source and a sink inside the door: people enter, use the site, and leave there |
+
+The world comes from `open_site`, an edited world as well as a shipped one. FLOWEDIT compares a run before an edit with a run
+after it, so the two may differ by the edit only: the people (count, kind, speed, start room, route, idle points) are drawn
+from the unedited base world, its graph and the seed alone; the edited site gives only the objects, which object serves which
+need, the dwell, and the entrances.
 """
 
 from __future__ import annotations
@@ -24,14 +29,13 @@ from typing import TYPE_CHECKING, Any
 import attrs
 import yaml
 
-from arena_simulation_setup.kg import Scene, Value
-from arena_simulation_setup.kg import load as load_kg
+from arena_simulation_setup.kg import Scene, Value, dumps
 
 from ..scenario import populate as P
-from ..scenario.formats import first_level, load_world, read_scenario, scenario_text
+from ..scenario.formats import first_level, scenario_text
 from ..scenario.materialize import GENERATED_MARKER, WouldOverwrite, is_generated
-from ..scenario.zones import zones_by_role
 from . import settings as S
+from .edit import EDITS, Site, open_site
 from .interactions import by_rule, handle
 
 if TYPE_CHECKING:
@@ -91,9 +95,8 @@ class Thing:
     capacity: int | None = None
     interaction_radius: float | None = None
     formation: dict[str, Any] | None = None
-    #: need -> amount, and whether the object's own `humansim:` block states it (no `from`)
+    #: need -> amount
     satisfies: dict[str, float] = attrs.Factory(dict)
-    block_satisfies: dict[str, float] = attrs.Factory(dict)
     dwell: dict[str, float] | None = None
     affords: list[Affordance] = attrs.Factory(list)
 
@@ -106,8 +109,8 @@ class Thing:
             out["capacity"] = self.capacity
         if self.interaction_radius is not None:
             out["interaction_radius"] = self.interaction_radius
-        if self.block_satisfies:
-            out["satisfies"] = dict(self.block_satisfies)
+        if self.satisfies:
+            out["satisfies"] = dict(self.satisfies)
         if self.formation:
             out["formation"] = self.formation
         return out
@@ -164,9 +167,8 @@ def read_graph(scene: Scene) -> Graph:
             t.capacity = int(p["capacity"]) if p.get("capacity") is not None else None
             t.interaction_radius = float(p["interaction_radius"]) if p.get("interaction_radius") is not None else None
         elif f.verb == "satisfies":
+            # `from` only records where the value came from: every satisfies is the object's own
             t.satisfies[_name(f.object)] = float(p.get("amount", 100.0))
-            if "from" not in p:
-                t.block_satisfies[_name(f.object)] = float(p.get("amount", 100.0))
         elif f.verb == "has_formation":
             params = {k: v for k, v in p.items() if k not in ("anchor_kind", "anchor_ref")}
             formation: dict[str, Any] = {"type": _name(f.object), "params": params}
@@ -177,6 +179,15 @@ def read_graph(scene: Scene) -> Graph:
             t.dwell = {"mean": float(f.object), **{k: float(v) for k, v in p.items() if k in ("std", "clip_low", "clip_high")}}
         elif f.verb == "affords":
             t.affords.append(Affordance(_name(f.object), bool(p.get("meet", False)), str(p.get("from", ""))))
+    # an object without `affords` (inserted by an edit, say) is used as the objects of its service type are
+    by_service: dict[str, tuple[str, list[Affordance]]] = {}
+    for name, t in sorted(objects.items()):
+        if t.affords and t.service and t.service not in by_service:
+            by_service[t.service] = (name, t.affords)
+    for t in objects.values():
+        if not t.affords and t.service in by_service:
+            source, affords = by_service[t.service]
+            t.affords = [attrs.evolve(a, origin=f"obj:{source} (same service type)") for a in affords]
     return Graph(objects, purposes, {d: sorted(set(r)) for d, r in doors.items()})
 
 
@@ -227,16 +238,18 @@ def plan_needs(graph: Graph, settings: Mapping[str, Any], floor: str, notes: lis
         for t, a in users:
             dwell = t.dwell or dict(settings["dwell"])
             groups.setdefault((t.service, a.kind, a.meet, tuple(sorted(dwell.items()))), []).append((t, a))
-        key, chosen = min(groups.items(), key=lambda kv: (-len(kv[1]), kv[1][0][0].name))
+        # HumanSim holds the dwell on the person's step, so one step (one kind, one dwell, one target) serves a need: objects
+        # that differ for one need would silently drop all but one, and an edit to the others would change nothing in PEDS
         if len(groups) > 1:
-            others = sorted(t.name for k, g in groups.items() if k != key for t, _ in g)
-            notes.append(f"need:{need}: one step serves it, so {others} (another type, interaction or dwell) are not sought for it")
+            parts = "; ".join(f"{sorted(t.name for t, _ in g)}: type {k[0]!r}, {k[1]}{' meet' if k[2] else ''}, dwell {dict(k[3])}" for k, g in sorted(groups.items(), key=lambda kv: kv[1][0][0].name))
+            raise ValueError(f"need:{need}: the objects that satisfy it differ ({parts}), and one step serves a need until HumanSim holds the dwell on the object: give them one type, interaction and dwell")
+        key, chosen = next(iter(groups.items()))
         names = tuple(t.name for t, _ in chosen)
         service = key[0]
         all_of_type = service is not None and {t.name for t in graph.objects.values() if t.service == service and t.floor == floor} == set(names)
-        target = service if len(names) > 1 and all_of_type else names[0]
         if len(names) > 1 and not all_of_type:
-            notes.append(f"need:{need}: {list(names)} share no type of their own, people seek {names[0]} only")
+            raise ValueError(f"need:{need}: {list(names)} satisfy it, but people seek several objects only by a service type all of them, and nothing else on the floor, have")
+        target = service if len(names) > 1 else names[0]
         t0, a0 = chosen[0]
         if t0.dwell is None:
             notes.append(f"obj:{t0.name}: no dwell in the graph, the settings' dwell used")
@@ -245,8 +258,8 @@ def plan_needs(graph: Graph, settings: Mapping[str, Any], floor: str, notes: lis
 
 
 @attrs.define
-class Site:
-    """The world as the reader samples it: the people's level, its zones and a free-space grid."""
+class Floor:
+    """A world as the reader samples it: the people's level, its zones and a free-space grid."""
 
     root: Path
     world: World
@@ -282,9 +295,14 @@ class Site:
         return (round(pt[0] + self.origin[0], 2), round(pt[1] + self.origin[1], 2))
 
 
-def _site(root: Path, world: World, graph: Graph) -> Site:
+def _origins(root: Path, world: World) -> dict[str, tuple[float, float]]:
     from arena_simulation_setup.tree.World.view import WorldView
 
+    return WorldView(root).level_origins() or {lid: (0.0, 0.0) for lid in world.levels}
+
+
+def _floor(root: Path, world: World, graph: Graph) -> Floor:
+    """The level people walk, with the graph's modelled objects the world does not hold stamped onto its grid."""
     from ..scenario.occupancy import level_grid, world_statics
     from ..scenario.promptgen.world import Grid
 
@@ -292,78 +310,67 @@ def _site(root: Path, world: World, graph: Graph) -> Site:
     if level is None:
         raise ValueError(f"{root.name}: no level with zones to place people on")
     level_id = str(level["id"])
-    origins = WorldView(root).level_origins() or {lid: (0.0, 0.0) for lid in world.levels}
     held = {o.name for lv in world.levels.values() for o in lv.objects}
     statics = list(world_statics(root, world))
     for t in sorted(graph.objects.values(), key=lambda t: t.name):
-        if t.name not in held and t.floor == level_id:
+        # a demand-only node (no model) is a HumanSim target, not an obstacle
+        if t.name not in held and t.floor == level_id and t.model:
             statics.append({"name": t.name, "model": t.model, "pose": [t.x, t.y], "radius": OBJECT_STAMP, "resolved": False})
     loaded = level_grid(root, statics, world)
     grid = None if loaded is None else Grid(occupied=loaded[0], res=loaded[1], ox=loaded[2], oy=loaded[3])
-    return Site(root, world, level_id, list(level.get("zones") or []), origins.get(level_id, (0.0, 0.0)), grid, statics)
+    return Floor(root, world, level_id, list(level.get("zones") or []), _origins(root, world).get(level_id, (0.0, 0.0)), grid, statics)
 
 
-def _objects(graph: Graph, site: Site, notes: list[str]) -> list[dict[str, Any]]:
-    """The graph's objects the world does not hold, posed where the graph says, in the map frame."""
-    from arena_simulation_setup.tree.World.view import WorldView
+def _objects(graph: Graph, floor: Floor, notes: list[str]) -> list[dict[str, Any]]:
+    """The graph's objects the world does not hold, posed where the graph says, in the map frame.
 
-    origins = WorldView(site.root).level_origins() or {lid: (0.0, 0.0) for lid in site.world.levels}
-    held = {o.name: (lid, o) for lid, lv in site.world.levels.items() for o in lv.objects}
+    An object without a model (the `<name>_demand` node an edit leaves behind) is written with an empty model: a HumanSim
+    target with its demand and no obstacle.
+    """
+    origins = _origins(floor.root, floor.world)
+    held = {o.name: (lid, o) for lid, lv in floor.world.levels.items() for o in lv.objects}
     out = []
     for name, t in sorted(graph.objects.items()):
         if name in held:
             lid, o = held[name]
             moved = lid != t.floor or math.dist((o.pose.position.x - origins.get(lid, (0, 0))[0], o.pose.position.y - origins.get(lid, (0, 0))[1]), (t.x, t.y)) > POSE_TOLERANCE
             if moved:
-                raise ValueError(f"obj:{name} is an object of world.yaml, a scenario cannot move it: move it in world.yaml, or rename it in the graph to place a scenario copy")
+                raise ValueError(f"obj:{name} is an object of world.yaml, a scenario cannot move it: move it with `flowedit edit`, which moves it in world.yaml too")
             continue
         ox, oy = origins.get(t.floor, (0.0, 0.0))
         entry: dict[str, Any] = {"name": name, "model": t.model, "pose": [round(t.x + ox, 3), round(t.y + oy, 3), round(t.yaw, 4)]}
-        if t.floor != site.level_id and len(site.world.levels) > 1:
+        if t.floor != floor.level_id and len(floor.world.levels) > 1:
             entry["level"] = t.floor
             entry["pose"] = [round(t.x, 3), round(t.y, 3), round(t.yaw, 4)]
         if block := t.block():
             entry["humansim"] = block
+        if not t.model:
+            if not block:
+                notes.append(f"obj:{name}: no model and no demand, left out")
+                continue
+            notes.append(f"obj:{name}: no model, written as a HumanSim target without an obstacle")
         if t.pose_ref:
             notes.append(f"obj:{name}: posed at zone {t.pose_ref!r} in the graph, written at the graph's point so the scenario is the same every run")
         out.append(entry)
     return out
 
 
-def _robot(site: Site, settings: Mapping[str, Any], notes: list[str]) -> dict[str, Any]:
-    """The robot of the settings, else of the first hand-written scenario whose route plans, else between the two farthest zones."""
-    from ..scenario.cli import _grid_loader, _route_reachable
+def _robot(floor: Floor, settings: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The robot of the settings as a scenario runs it, None without one: the reader never invents a robot."""
+    from ..scenario.route import robot_for
 
-    if settings["robot"]:
-        return dict(settings["robot"])
-    grid = _grid_loader(site.root, site.world, site.statics)
-    for cand in sorted((site.root / "scenarios").glob("*/scenario.yaml")):
-        if is_generated(cand):
-            continue
-        robots = read_scenario(cand).get("robots") or []
-        if robots and isinstance(robots[0], dict) and robots[0].get("start") and _route_reachable(grid, site.zones, dict(robots[0])):
-            notes.append(f"robot: copied from the hand-written scenario {cand.parent.name!r}")
-            return dict(robots[0])
-    centroids = P.zone_centroids(site.zones)
-    if len(centroids) < 2:
-        raise ValueError(f"{site.root.name}: no robot in the settings, no scenario with one, and fewer than two zones to drive between")
-    names = sorted(centroids)
-    pairs = sorted(((math.dist(centroids[a], centroids[b]), a, b) for i, a in enumerate(names) for b in names[i + 1 :]), reverse=True)
-    start, goal = pairs[0][1:]
-    for _d, a, b in pairs:
-        if _route_reachable(grid, site.zones, {"start": a, "goal": b}):
-            start, goal = a, b
-            break
-    notes.append(f"robot: between the two farthest reachable zones {start!r} and {goal!r}")
-    return {"start": start, "goal": goal}
+    if not settings["robot"]:
+        return None
+    return robot_for(dict(settings["robot"]), floor.zones)
 
 
-def _homes(site: Site, robot: Mapping[str, Any], spec: Mapping[str, Any]) -> frozenset[str]:
+def _homes(floor: Floor, robot: Mapping[str, Any] | None) -> frozenset[str]:
     from ..scenario.zone_screen import ref_safe_zones, screen_zones
 
-    g = site.grid
+    g = floor.grid
     clearance_map = None if g is None else (g.dist, g.res, g.ox, g.oy)
-    verdicts = screen_zones(site.zones, world_root=site.root, route=P.route_points(spec, site.zones), statics=site.statics, min_route_clearance=P.MIN_ROUTE_CLEARANCE, robot_zones=P.robot_zones(robot), clearance_map=clearance_map, world=site.world)
+    route = P.route_points(robot, floor.zones) if robot else []
+    verdicts = screen_zones(floor.zones, world_root=floor.root, route=route, statics=floor.statics, min_route_clearance=P.MIN_ROUTE_CLEARANCE, robot_zones=P.robot_zones(robot or {}), clearance_map=clearance_map, world=floor.world)
     return frozenset(ref_safe_zones(verdicts))
 
 
@@ -391,44 +398,57 @@ def _walk(points: Sequence[Point], stand: Mapping[str, float]) -> dict[str, Any]
     return {f"to_{i + 1}": {"kind": "go_to", "target_pose": {"x": x, "y": y, "theta": 0.0}, "duration": dict(stand), "patience": patience_for(WALK_PATIENCE, stand)} for i, (x, y) in enumerate(points)}
 
 
-def _people(site: Site, graph: Graph, settings: Mapping[str, Any], needs: Mapping[str, NeedPlan], robot: Mapping[str, Any], homes: frozenset[str], world: str, seed: int, notes: list[str]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    """The people present at the start, placed and routed by room purpose as populate places them, each with its own need-driven type."""
-    overrides = {room: role for room, role in graph.purposes.items()}
-    by_role = zones_by_role(site.zones, overrides)
-    targets, _basis = P._targets("normal", by_role)
-    centroids = P.zone_centroids(site.zones)
-    starts = P._starts(targets, by_role, homes, centroids, P.robot_zones(robot), widen=True) if targets else []
-    pool = P._pool(by_role, centroids)
-    destinations = P.for_people(pool) or pool
-    world_rng = random.Random(f"{world}:{seed}")
-    tempo = world_rng.uniform(*P.TEMPO_RANGE)
-    crowd = world_rng.uniform(*P.CROWD_RANGE)
-    models = list(P.MODELS)
-    world_rng.shuffle(models)
-    if settings["count"] is not None:
-        n = int(settings["count"])
+@attrs.define
+class Base:
+    """What the people are drawn from: the unedited base world and its graph, the same for every edit of it."""
+
+    name: str
+    floor: Floor
+    graph: Graph
+    homes: frozenset[str]
+    crowd: P.Crowd
+
+
+def _base(site: Site, base: Site | None, settings: Mapping[str, Any], robot_spec: Mapping[str, Any] | None, seed: int, notes: list[str]) -> Base:
+    """The crowd of `site.base`: `site` itself when unedited, else `base`, else the base world opened by name."""
+    if site.edits:
+        if base is None:
+            from ..scenario.cli import world_root
+
+            base = open_site(world_root(None, site.base), site.scenario, site.seed, [])
+        if base.edits or base.name != site.base:
+            raise ValueError(f"{base.name} is not the unedited base world {site.base!r} of {site.name}")
     else:
-        n = round(P.nominal_count(targets) * crowd * float(settings["scale"]))
-        n = max(P.MIN_CAST, n) if n > 0 else 0
-    if n and not starts:
+        base = site
+    graph = read_graph(base.graph)
+    floor = _floor(base.root, base.world, graph)
+    homes = _homes(floor, robot_spec)
+    crowd = P.crowd(
+        floor.zones,
+        overrides=dict(graph.purposes),
+        homes=homes,
+        forbidden=P.robot_zones(robot_spec or {}),
+        seed=seed,
+        world=site.base,
+        count=settings["count"],
+        scale=float(settings["scale"]),
+        tag="flowedit",
+    )
+    if not crowd.people and settings["count"] != 0:
         notes.append("people: no room of a purpose to start in, nobody placed")
-        return [], {}
-    weights = P.mix_for("normal", P.world_kind(site.zones, overrides))
-    kinds, kind_weights = list(weights), list(weights.values())
-    rng = random.Random(f"flowedit:{world}:{seed}")
+    return Base(site.base, floor, graph, homes, crowd)
+
+
+def _people(base: Base, settings: Mapping[str, Any], needs: Mapping[str, NeedPlan], seed: int) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """The people present at the start, as populate places and routes them in the base world, each with its own need-driven type."""
     humans, types = [], {}
-    for i in range(n):
-        stops = rng.choices([s for s, _ in P.ROUTE_STOPS], weights=[w for _, w in P.ROUTE_STOPS])[0]
-        home = starts[i % len(starts)]
-        kind = rng.choices(kinds, weights=kind_weights)[0]
-        speed = P.speed_for(kind, rng, tempo)
-        rooms = [home, *P._route(home, destinations, i, stops, centroids)]
+    for i, person in enumerate(base.crowd.people):
         name = f"flow_{i + 1}"
-        point_rng = random.Random(f"flowedit:{world}:{seed}:{name}")
-        points = [pt for room in rooms if (pt := site.point(room, point_rng)) is not None]
+        point_rng = random.Random(f"flowedit:{base.name}:{seed}:{name}")
+        points = [pt for room in person.rooms if (pt := base.floor.point(room, point_rng)) is not None]
         ref = f"./{TYPES_DIR}/flow__{name}.yaml"
-        types[ref] = _type_doc(f"flow__{name}", kind, settings, needs, "idle", {"idle": {"steps": _walk(points, settings["idle"]["stand"]), "then": "idle", "on_failure": "idle"}})
-        humans.append({"name": name, "model": models[i % len(models)], "pose": home, "agent": {"agent_type": ref, "desired_velocity": speed}})
+        types[ref] = _type_doc(f"flow__{name}", person.kind, settings, needs, "idle", {"idle": {"steps": _walk(points, settings["idle"]["stand"]), "then": "idle", "on_failure": "idle"}})
+        humans.append({"name": name, "model": person.model, "pose": person.home, "agent": {"agent_type": ref, "desired_velocity": person.speed}})
     return humans, types
 
 
@@ -444,19 +464,16 @@ def _strip(door: Door, inward: Point, depth: tuple[float, float], origin: Point)
     return [{"x": round(x + origin[0], 3), "y": round(y + origin[1], 3)} for x, y in corners]
 
 
-def _entrances(site: Site, graph: Graph, settings: Mapping[str, Any], needs: Mapping[str, NeedPlan], world: str, seed: int, notes: list[str]) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
-    """A source and a sink inside every exterior door of the people's level, and the visitor type each source releases."""
+def _entrances(floor: Floor, graph: Graph, base: Base, settings: Mapping[str, Any], needs: Mapping[str, NeedPlan], seed: int, notes: list[str]) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """A source and a sink inside every exterior door of the edited site's level, and the visitor type each source releases,
+    its stops drawn in the base world."""
     import shapely
 
     cfg = settings["entrances"]
     if float(cfg["rate"]) <= 0:
         return {}, {}
-    level = site.world.levels[site.level_id]
+    level = floor.world.levels[floor.level_id]
     doors = {d.name: d for d in level.doors}
-    overrides = dict(graph.purposes)
-    by_role = zones_by_role(site.zones, overrides)
-    centroids = P.zone_centroids(site.zones)
-    destinations = P.for_people(P._pool(by_role, centroids)) or P._pool(by_role, centroids)
     regions: dict[str, Any] = {}
     types: dict[str, dict[str, Any]] = {}
     exterior = [d for d in graph.exterior_doors() if d in doors]
@@ -464,7 +481,7 @@ def _entrances(site: Site, graph: Graph, settings: Mapping[str, Any], needs: Map
         notes.append("entrances: no door of the people's level lies in one room only, so no sources or sinks")
     for name in exterior:
         door, room = doors[name], graph.doors[name][0]
-        shape = site.shape(room)
+        shape = floor.shape(room)
         if shape is None:
             notes.append(f"door:{name}: its room {room!r} has no zone on the people's level, no entrance")
             continue
@@ -481,19 +498,19 @@ def _entrances(site: Site, graph: Graph, settings: Mapping[str, Any], needs: Map
             notes.append(f"door:{name}: neither side lies in room {room!r}, no entrance")
             continue
         sink, source = f"{name}_sink", f"{name}_source"
-        sink_poly = _strip(door, inward, SINK_DEPTH, site.origin)
+        sink_poly = _strip(door, inward, SINK_DEPTH, floor.origin)
         leave_at = (round(sum(p["x"] for p in sink_poly) / 4, 2), round(sum(p["y"] for p in sink_poly) / 4, 2))
-        rng = random.Random(f"flowedit:{world}:{seed}:visitor:{name}")
-        rooms = [r for r in destinations if r != room]
+        rng = random.Random(f"flowedit:{base.name}:{seed}:visitor:{name}")
+        rooms = [r for r in base.crowd.destinations if r != room]
         stops = rng.sample(rooms, min(int(cfg["stops"]), len(rooms))) if rooms else []
-        points = [pt for r in stops if (pt := site.point(r, rng)) is not None]
+        points = [pt for r in stops if (pt := base.floor.point(r, rng)) is not None]
         ref = f"./{TYPES_DIR}/visitor__{name}.yaml"
         leave = {"leave": {"steps": {"exit": {"kind": "go_to", "target_pose": {"x": leave_at[0], "y": leave_at[1], "theta": 0.0}, "patience": dict(WALK_PATIENCE)}}, "then": "leave", "on_failure": "leave"}}
         visit = {"steps": _walk(points, settings["idle"]["stand"]), "then": "leave", "on_failure": "leave"} if points else {"steps": {"look": {"duration": dict(settings["idle"]["stand"])}}, "then": "leave"}
         types[ref] = _type_doc(f"visitor__{name}", "adult", settings, needs, "visit", {"visit": visit, **leave})
         regions[source] = {
             "type": "source",
-            "polygon": _strip(door, inward, SOURCE_DEPTH, site.origin),
+            "polygon": _strip(door, inward, SOURCE_DEPTH, floor.origin),
             "config": {
                 "rate_profile": [{"t": 0.0, "rate": float(cfg["rate"])}],
                 "max_concurrent": int(cfg["max_concurrent"]),
@@ -512,38 +529,41 @@ class Result:
     needs: dict[str, NeedPlan]
     notes: list[str]
     provenance: dict[str, Any]
+    #: the world the scenario is written into
+    root: Path
 
 
-def read(root: Path, graph_path: Path, settings: Mapping[str, Any] | None = None, seed: int = 0, notes: list[str] | None = None) -> Result:
-    """The scenario of the FLOWEDIT graph at `graph_path` for the world at `root` under crowd `settings`, deterministic in all four."""
-    from ..scenario.route import robot_for
+def read(site: Site, settings: Mapping[str, Any] | None = None, seed: int = 0, notes: list[str] | None = None, *, base: Site | None = None) -> Result:
+    """The scenario of `site` (from `open_site`) under crowd `settings` and `seed`.
 
+    The people come from the unedited base world (`base`, else opened by `site.base`), so every edit of one world gets the same
+    people for the same settings and seed; the objects, needs, dwell and entrances come from `site`.
+    """
     notes = notes if notes is not None else []
     settings = S.load(settings)
-    root = Path(root).resolve()
-    world = load_world(root)
-    text = Path(graph_path).read_text()
-    graph = read_graph(load_kg(yaml.safe_load(text)))
-    graph.text_sha = hashlib.sha256(text.encode()).hexdigest()[:12]
-    site = _site(root, world, graph)
-    objects = _objects(graph, site, notes)
-    needs = plan_needs(graph, settings, site.level_id, notes)
+    graph = read_graph(site.graph)
+    text = dumps(site.graph)
+    floor = _floor(site.root, site.world, graph)
+    objects = _objects(graph, floor, notes)
+    needs = plan_needs(graph, settings, floor.level_id, notes)
     if not needs:
         notes.append("needs: no object on the people's level satisfies a need or affords a use, people only walk")
-    robot = _robot(site, settings, notes)
-    spec = robot_for(robot, site.zones)
-    homes = _homes(site, robot, spec)
-    humans, types = _people(site, graph, settings, needs, robot, homes, root.name, seed, notes)
-    regions, visitor_types = _entrances(site, graph, settings, needs, root.name, seed, notes)
-    doc: dict[str, Any] = {"objects": objects, "humans": humans, "robots": [spec], "regions": regions}
-    try:
-        graph_ref = str(Path(graph_path).resolve().relative_to(root))
-    except ValueError:
-        graph_ref = Path(graph_path).name
+    robot = _robot(floor, settings)
+    people_from = _base(site, base, settings, robot, seed, notes)
+    if people_from.floor.level_id != floor.level_id:
+        raise ValueError(f"{site.name}: people walk level {floor.level_id!r}, its base {site.base} level {people_from.floor.level_id!r}")
+    humans, types = _people(people_from, settings, needs, seed)
+    regions, visitor_types = _entrances(floor, graph, people_from, settings, needs, seed, notes)
+    doc: dict[str, Any] = {"objects": objects, "humans": humans, "regions": regions}
+    if robot is not None:
+        doc["robots"] = [robot]
     provenance = {
         "generator": "flowedit read",
-        "graph": graph_ref,
-        "graph_sha256": graph.text_sha,
+        "world": site.name,
+        "base": site.base,
+        "scenario": site.scenario,
+        "edits": [e.id for e in site.edits],
+        "graph_sha256": hashlib.sha256(text.encode()).hexdigest()[:12],
         "seed": seed,
         "settings_digest": S.digest(settings),
         "settings": dict(settings),
@@ -551,20 +571,20 @@ def read(root: Path, graph_path: Path, settings: Mapping[str, Any] | None = None
         "entrances": sorted(k[: -len("_source")] for k in regions if k.endswith("_source")),
         "notes": list(notes),
     }
-    return Result(doc, {**types, **visitor_types}, needs, notes, provenance)
+    return Result(doc, {**types, **visitor_types}, needs, notes, provenance, Path(site.root))
 
 
 def _dump(doc: Mapping[str, Any]) -> str:
     return yaml.safe_dump(dict(doc), sort_keys=False, default_flow_style=None, width=1 << 16)
 
 
-def render(result: Result, root: Path, name: str) -> dict[str, str]:
+def render(result: Result, name: str) -> dict[str, str]:
     """The files of `result` as `scenarios/<name>/` holds them, relative path to text, checked by the scenario model."""
     p = result.provenance
     header = "\n".join(
         (
             f"# FLOWEDIT scenario: {name} ({len(result.doc['humans'])} people, {len(p['entrances'])} entrance(s), needs: {', '.join(result.needs) or 'none'})",
-            f"# generator: flowedit read, graph {p['graph']} sha256:{p['graph_sha256']}, settings {p['settings_digest']}, seed {p['seed']}",
+            f"# generator: flowedit read, world {p['world']} (base {p['base']}), graph sha256:{p['graph_sha256']}, settings {p['settings_digest']}, seed {p['seed']}",
             "#",
             GENERATED_MARKER,
             "",
@@ -577,20 +597,22 @@ def render(result: Result, root: Path, name: str) -> dict[str, str]:
             (Path(stage) / rel).parent.mkdir(parents=True, exist_ok=True)
             (Path(stage) / rel).write_text(text)
         try:
-            files["scenario.yaml"] = scenario_text(result.doc, world_root=Path(root), types_dir=Path(stage), header=header)
+            files["scenario.yaml"] = scenario_text(result.doc, world_root=result.root, types_dir=Path(stage), header=header)
         except ValueError as exc:
             raise ValueError(f"scenarios/{name}: {exc}") from exc
     files[PROVENANCE] = _dump(p)
     return files
 
 
-def write(result: Result, root: Path, name: str, force: bool = False) -> Path:
-    """Write `scenarios/<name>/`, replacing only a generated scenario unless `force`, its stale type files removed."""
-    out = Path(root) / "scenarios" / name
+def write(result: Result, name: str, force: bool = False) -> Path:
+    """Write `scenarios/<name>/` into the site's world, replacing only a generated scenario unless `force`, its stale type files removed."""
+    if result.provenance["edits"] and not (result.root / EDITS).is_file():
+        raise ValueError(f"{result.provenance['world']} is not saved: `flowedit edit --write` saves an edited world before its scenario is read into it")
+    out = result.root / "scenarios" / name
     existing = out / "scenario.yaml"
     if existing.is_file() and not force and not is_generated(existing):
         raise WouldOverwrite(f"{existing} was not generated, pass --force to replace it or choose another --name")
-    files = render(result, root, name)
+    files = render(result, name)
     if (out / TYPES_DIR).is_dir():
         shutil.rmtree(out / TYPES_DIR)
     for rel, text in files.items():

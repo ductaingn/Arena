@@ -31,6 +31,7 @@ arena feature isaac install # optional
 arena feature gazebo install # optional
 arena feature mujoco install # optional: MuJoCo simulator (sim:=mujoco)
 arena feature flatsim install # optional: 2D simulator without a renderer (sim:=flatsim)
+arena feature meshnav install # optional: 3D mesh navigation over stairs and escalators (robot.mobile:=meshnav)
 arena feature training install # optional
 arena feature auditory install # optional: sound simulation (acoustics:=arena)
 arena feature hearing install # optional: robot hearing (robot.hearing)
@@ -125,7 +126,7 @@ If the hook auto-fixes something, the commit is aborted and the fixes are left u
 pre-commit run basedpyright --hook-stage manual
 ```
 
-[`_meta/typings`](_meta/typings) holds stubs for compiled modules that ship no type information (USD, MuJoCo, Box2D, gz-transport, tf2, the Qt bindings).
+[`_meta/typings`](_meta/typings) holds stubs for compiled modules that ship no type information (USD, MuJoCo, Box2D, Warp, gz-transport, tf2, the Qt bindings).
 
 [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs the same check, at the hook's basedpyright version, over `_meta` and every package it tests, after the test suites.
 
@@ -150,7 +151,7 @@ The lint, tests and coverage workflows run on every push to `jazzy` and every pu
 
 Bump the Ruff version with `pre-commit autoupdate`.
 
-[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs every test suite of the Arena-owned packages in a `ros:jazzy` container. It installs what they need the way `arena update` does (`rosdep` from each `package.xml`, `colcon --packages-up-to`, `uv_workspace.py compose` with `uv sync`, the default robot's submodules), so a missing `package.xml` or `pyproject.toml` dependency fails it, and runs them with `colcon test`, the runner behind `arena test`, one package per worker on its own `ROS_DOMAIN_ID`.
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs every test suite of the Arena-owned packages in a `ros:jazzy` container. It installs what they need the way `arena update` does (`rosdep` from each `package.xml`, `colcon --packages-up-to`, `uv_workspace.py compose` with `uv sync`, the default robot's submodules), so a missing `package.xml` or `pyproject.toml` dependency fails it, and runs them with `colcon test`, the runner behind `arena test`, one package per worker on its own `ROS_DOMAIN_ID`. The one difference from `arena update` is torch: the runners have no GPU and the CUDA stack fills their disk, so [`.github/ci/sync-python.sh`](.github/ci/sync-python.sh) skips it and installs the CPU wheel of the locked torch version from the PyTorch index.
 
 The container is this or last week's `ghcr.io/voshch/arena-ci:jazzy-<ISO week>` when one exists, else plain `ros:jazzy`. A push to `jazzy` without this week's image dispatches [`.github/workflows/ci-image.yml`](.github/workflows/ci-image.yml), which runs [`.github/ci/provision.sh`](.github/ci/provision.sh) on a clean `ros:jazzy` and publishes the result. The image records the rosdep keys it was provisioned for, and [`.github/ci/system-deps.sh --purge-dropped`](.github/ci/system-deps.sh) purges what only a since-dropped key installed before installing the current ones, so a run in the image installs the same set as a run in plain `ros:jazzy`. Build objects go through ccache and downloads through the uv cache, both content-addressed. The package must be public for runs to pull it.
 

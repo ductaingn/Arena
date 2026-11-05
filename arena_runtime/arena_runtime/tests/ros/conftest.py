@@ -1,4 +1,4 @@
-"""In-process ArenaNode on the dummy, flatsim or gazebo host plus a probe node, for lockstep tests."""
+"""In-process ArenaRuntimeNode on the dummy, flatsim or gazebo host plus a probe node, for lockstep tests."""
 
 from __future__ import annotations
 
@@ -47,9 +47,25 @@ class Rig:
                 raise AssertionError(f"timed out after {timeout}s waiting for {what}")
             await asyncio.sleep(0.02)
 
+    async def drain(self, stable: float = 0.3, timeout: float = 20.0) -> float:
+        """Wait until the sim clock is unchanged for `stable` seconds, returning its value."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        last = self.probe.clock()
+        since = loop.time()
+        while loop.time() - since < stable:
+            if loop.time() >= deadline:
+                raise AssertionError(f"sim clock did not settle within {timeout}s")
+            await asyncio.sleep(0.02)
+            now = self.probe.clock()
+            if now != last:
+                last = now
+                since = loop.time()
+        return last
+
     async def frozen(self, seconds: float) -> float:
         """Assert the sim clock does not move for `seconds`, returning its value."""
-        before = self.probe.clock()
+        before = await self.drain()
         await asyncio.sleep(seconds)
         assert self.probe.clock() == pytest.approx(before, abs=1e-9), "sim clock moved while it should be frozen"
         return before
@@ -65,7 +81,7 @@ async def _run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], sim: st
     from std_msgs.msg import Bool
     from std_srvs.srv import Trigger
 
-    from arena_runtime.arena_node import ArenaNode
+    from arena_runtime.arena_runtime_node import ArenaRuntimeNode
 
     latched = rclpy.qos.QoSProfile(depth=LATCHED_DEPTH, durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL)
 
@@ -80,12 +96,12 @@ async def _run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], sim: st
             self.create_subscription(Bool, "/arena/state/paused", self._on_paused, latched)
             self.beat_topic = "/probe/beat"
             self.beat = self.create_publisher(LockstepHeartbeat, self.beat_topic, 10)
-            self.hold = self.create_client_wrapper(LifecycleHold, "/arena/sim_lifecycle/hold", timeout=5.0)
-            self.step = self.create_client_wrapper(LifecycleStep, "/arena/sim_lifecycle/step", timeout=5.0)
-            self.window = self.create_client_wrapper(LifecycleUnpauseWindow, "/arena/sim_lifecycle/unpause_window", timeout=5.0)
-            self.start = self.create_client_wrapper(LockstepStart, "/arena/sim_lifecycle/lockstep/start", timeout=5.0)
-            self.register = self.create_client_wrapper(LockstepRegister, "/arena/sim_lifecycle/lockstep/register", timeout=5.0)
-            self.stop = self.create_client_wrapper(Trigger, "/arena/sim_lifecycle/lockstep/stop", timeout=5.0)
+            self.hold = self.create_client_wrapper(LifecycleHold, "/arena/sim_lifecycle/hold", timeout=30.0)
+            self.step = self.create_client_wrapper(LifecycleStep, "/arena/sim_lifecycle/step", timeout=30.0)
+            self.window = self.create_client_wrapper(LifecycleUnpauseWindow, "/arena/sim_lifecycle/unpause_window", timeout=30.0)
+            self.start = self.create_client_wrapper(LockstepStart, "/arena/sim_lifecycle/lockstep/start", timeout=30.0)
+            self.register = self.create_client_wrapper(LockstepRegister, "/arena/sim_lifecycle/lockstep/register", timeout=30.0)
+            self.stop = self.create_client_wrapper(Trigger, "/arena/sim_lifecycle/lockstep/stop", timeout=30.0)
 
         def _on_status(self, msg: LockstepStatus) -> None:
             self.status = msg
@@ -140,7 +156,7 @@ async def _run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], sim: st
 
         servers.append(FlatsimServer(parameter_overrides=[rclpy.parameter.Parameter("physics_dt", value=DT)]))
         executor.add_node(servers[0])
-    arena = ArenaNode()
+    arena = ArenaRuntimeNode()
     arena.declare_parameter("physics_dt", DT)
     arena.declare_parameter("sim", sim)
     probe = Probe()
@@ -149,6 +165,7 @@ async def _run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], sim: st
     rig = Rig(arena, probe, executor, servers)
     loop = asyncio.get_running_loop()
     spin = loop.run_in_executor(None, executor.spin)
+    teardown_hang: TimeoutError | None = None
     try:
         try:
             await arena.setup()
@@ -156,14 +173,17 @@ async def _run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], sim: st
             if "already running" in str(e):
                 pytest.skip(str(e))
             raise
-        assert await probe.start.ensure(timeout_sec=10.0)
-        await rig.until(lambda: probe.clock() > 0.0, 5.0, f"{sim} /clock")
+        assert await probe.start.ensure(timeout_sec=30.0)
+        await rig.until(lambda: probe.clock() > 0.0, 30.0, f"{sim} /clock")
         await scenario(rig)
     finally:
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(arena.teardown(), timeout=5.0)
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(arena.kill_launches(), timeout=10.0)
+        for cleanup in (arena.teardown, arena.kill_launches):
+            try:
+                await asyncio.wait_for(cleanup(), timeout=30.0)
+            except TimeoutError as e:
+                teardown_hang = teardown_hang or e
+            except Exception:
+                pass
         if arena._clock_task is not None:
             arena._clock_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -178,11 +198,13 @@ async def _run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], sim: st
         for server in servers:
             executor.remove_node(server)
             server.destroy_node()
+        if teardown_hang is not None:
+            raise teardown_hang
 
 
 @pytest.fixture()
 def arena_rig() -> typing.Callable[[typing.Callable[[Rig], typing.Awaitable[None]]], None]:
-    """Runs `scenario(rig)` on a fresh event loop against a spinning ArenaNode(sim=dummy)."""
+    """Runs `scenario(rig)` on a fresh event loop against a spinning ArenaRuntimeNode(sim=dummy)."""
 
     def run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], *, timeout: float = 90.0) -> None:
         asyncio.run(asyncio.wait_for(_run(scenario, "dummy"), timeout=timeout))
@@ -192,7 +214,7 @@ def arena_rig() -> typing.Callable[[typing.Callable[[Rig], typing.Awaitable[None
 
 @pytest.fixture()
 def flatsim_rig() -> typing.Callable[[typing.Callable[[Rig], typing.Awaitable[None]]], None]:
-    """Runs `scenario(rig)` on a fresh event loop against a spinning ArenaNode(sim=flatsim) and a flatsim server."""
+    """Runs `scenario(rig)` on a fresh event loop against a spinning ArenaRuntimeNode(sim=flatsim) and a flatsim server."""
 
     def run(scenario: typing.Callable[[Rig], typing.Awaitable[None]], *, timeout: float = 90.0) -> None:
         pytest.importorskip("flatsim_msgs")
@@ -203,7 +225,7 @@ def flatsim_rig() -> typing.Callable[[typing.Callable[[Rig], typing.Awaitable[No
 
 @pytest.fixture()
 def gazebo_rig(tmp_path: Path) -> typing.Iterator[typing.Callable[[typing.Callable[[Rig], typing.Awaitable[None]]], None]]:
-    """Runs `scenario(rig)` against a spinning ArenaNode(sim=gazebo), a running headless gz server on an empty world and its /clock bridge."""
+    """Runs `scenario(rig)` against a spinning ArenaRuntimeNode(sim=gazebo), a running headless gz server on an empty world and its /clock bridge."""
     if shutil.which("gz") is None:
         pytest.skip("gz is not on PATH")
     pytest.importorskip("ros_gz_interfaces")

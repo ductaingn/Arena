@@ -1,42 +1,41 @@
 from __future__ import annotations
 
+import importlib.util
+import os
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 
-_ROS_SKIP_REASON = "ROS2 not discoverable, source install/setup.bash to enable"
+
+def pytest_configure(config: pytest.Config) -> None:
+    if importlib.util.find_spec("arena_simulation_setup") is not None:
+        from arena_simulation_setup.testing import install_fake_assets
+
+        install_fake_assets()
 
 
-def _ros_available() -> bool:
+@pytest.fixture
+def local_root(tmp_path: Path) -> Iterator[Path]:
+    """ARENA_ASSETS_DIR_LOCAL pointed at tmp_path for one test, restored after."""
+    previous = os.environ.get("ARENA_ASSETS_DIR_LOCAL")
+    os.environ["ARENA_ASSETS_DIR_LOCAL"] = str(tmp_path)
     try:
-        import rclpy  # noqa: F401
-    except ImportError:
-        return False
-    return True
+        yield tmp_path
+    finally:
+        if previous is None:
+            del os.environ["ARENA_ASSETS_DIR_LOCAL"]
+        else:
+            os.environ["ARENA_ASSETS_DIR_LOCAL"] = previous
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if _ros_available():
-        return
-    skip = pytest.mark.skip(reason=_ROS_SKIP_REASON)
-    for item in items:
-        path = str(item.path)
-        if "/tests/ros/" in path or "/tests/integration/" in path:
-            item.add_marker(skip)
-
-
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture
 def rclpy_context():
-    try:
-        import rclpy
-        import rclpy.node
-    except ImportError:
-        yield None
-        return
+    rclpy = pytest.importorskip("rclpy")
     rclpy.init()
-    node = rclpy.node.Node("pytest_host")
     try:
         yield rclpy
     finally:
-        node.destroy_node()
         rclpy.shutdown()
 
 

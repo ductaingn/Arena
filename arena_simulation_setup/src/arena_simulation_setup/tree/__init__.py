@@ -20,19 +20,21 @@ from typing_extensions import Self
 from arena_simulation_setup import (
     ARENA_ASSETS_DIR,
     DOMAIN_DEFAULT,
+    NO_ASSETS_DIR,
 )
 from arena_simulation_setup.utils.cattrs import Idempotent, Parseable, Serializable
 
 
 def providers(env: str, default: str) -> Sequence[str]:
-    """Bucket list for one asset family, from *env* or *default*. Empty falls back too,
-    so the shell can export the override slot without restating the bucket name."""
-    return [p for p in (os.environ.get(env) or default).split(',') if p]
+    """Asset store sources for one asset family, from *env* or *default*. Empty falls back too,
+    so the shell can export the override slot without restating the source, and an
+    entry `default` stands for *default*."""
+    return [default if p == 'default' else p for p in (os.environ.get(env) or default).split(',') if p]
 
 
 NETWORK_PROVIDERS: Sequence[str] = providers('ASSET_BUCKETS', 'default')
-WORLD_PROVIDERS: Sequence[str] = providers('WORLD_BUCKETS', 'arena-worlds-prod-public')
-BENCHMARK_PROVIDERS: Sequence[str] = providers('BENCHMARK_BUCKETS', 'arena-benchmarks-prod-public')
+WORLD_PROVIDERS: Sequence[str] = providers('WORLD_BUCKETS', 'public/worlds')
+BENCHMARK_PROVIDERS: Sequence[str] = providers('BENCHMARK_BUCKETS', 'public/benchmarks')
 
 
 async def _subprocess_output(args: Sequence[str], **kwargs: typing.Any) -> bytes:
@@ -113,6 +115,7 @@ class LocalRootPath(RootPath):
 
 
 class DynamicPaths:
+    SCENARIO = DynamicPath()
     WORLD = DynamicPath()
     LINKED = DynamicPathList()
     ARENA = LocalRootPath()
@@ -412,6 +415,7 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         ttl: int | None = None,
         annotated: bool = True,
         list_prefix: str = '',
+        list_containing: str = '',
         **kwargs: object,
     ) -> None:
         path = ARENA_ASSETS_DIR / provider
@@ -420,6 +424,7 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         # payloads without an annotation.yaml sentinel are enumerated by directory instead
         self._annotated = annotated
         self._list_prefix = list_prefix
+        self._list_containing = list_containing
 
         # formats=() opts out of the model-format filter, which would otherwise drop
         # every non-model file in a payload (meshes, scenario.json, map images).
@@ -430,13 +435,30 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         self._flush_scheduled = False
         self._batch_lock = asyncio.Lock()
         self._stale: set[IdentifierT] = set()
+        self._failures: dict[str, str] = {}
+        self._absent: set[str] = set()
 
     def invalidate(self):
         super().invalidate()
         self._stale.clear()
+        self._absent.clear()
 
     def is_stale(self, identifier: IdentifierT) -> bool:
         return identifier in self._stale
+
+    def failure(self, identifier: IdentifierT) -> str | None:
+        """Why the last fetch of *identifier* failed, None when it did not."""
+        if ARENA_ASSETS_DIR == NO_ASSETS_DIR:
+            return 'no asset cache directory: set ARENA_DATA_DIR or ARENA_ASSETS_DIR'
+        return self._failures.get(str(identifier.relpath()))
+
+    @staticmethod
+    def _reason(error: Exception) -> str:
+        if isinstance(error, subprocess.CalledProcessError):
+            lines = (error.stderr or b'').decode(errors='replace').strip().splitlines()
+            if lines:
+                return lines[-1].removeprefix('error: ')
+        return str(error)
 
     def expire(self, identifier: IdentifierT | None = None) -> int:
         """Expire one complete cache entry, or every one in the bucket plus its listings."""
@@ -467,6 +489,10 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         logging.warning('%s: %s unreachable, serving expired cache %s', type(self).__name__, self._provider, candidate)
         self._stale.add(identifier)
         return candidate
+
+    @staticmethod
+    def _off() -> bool:
+        return os.environ.get('ARENA_ASSETS_NET') == 'off' or ARENA_ASSETS_DIR == NO_ASSETS_DIR
 
     @classmethod
     async def check_output_async(cls, args: Iterable[str], **kwargs: typing.Any) -> bytes:
@@ -519,8 +545,11 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
             )
             stamp = str(int(time.time()))
             for relpath, futures in batch.items():
+                self._failures.pop(relpath, None)
                 target = root_path / relpath
                 result = target if target.exists() else None
+                if result is None:
+                    self._absent.add(relpath)
                 if result is not None and result.is_dir():
                     try:
                         (result / self._TTL_MARKER).write_text(stamp)
@@ -529,18 +558,23 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
                 for fut in futures:
                     if not fut.done():
                         fut.set_result(result)
-        except Exception:
-            import traceback
-
-            logging.warning(traceback.format_exc())
-            for futures in batch.values():
+        except Exception as e:
+            reason = self._reason(e)
+            logging.warning('%s: fetching %s from %s failed: %s', type(self).__name__, ', '.join(relpaths), self._provider, reason)
+            for relpath, futures in batch.items():
+                self._failures[relpath] = reason
                 for fut in futures:
                     if not fut.done():
                         fut.set_result(None)
 
     async def resolve(self, identifier: IdentifierT) -> Path | None:
+        if self._off():
+            return None
         if identifier in self._cache:
             return self._cache[identifier]
+        relpath = str(identifier.relpath())
+        if relpath in self._absent:
+            return None
 
         candidate = self.path / identifier.relpath()
         if candidate.is_dir():
@@ -553,7 +587,7 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
                 self._cache[identifier] = candidate
                 return candidate
 
-        result = await self._batch_request(str(identifier.relpath()))
+        result = await self._batch_request(relpath)
         if result is None:
             result = self._serve_stale(identifier, candidate)
         if result is not None:
@@ -572,6 +606,8 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         return bool(stamp) and time.time() - stamp < self._ttl
 
     async def locate(self, identifier: IdentifierT) -> Path | None:
+        if self._off():
+            return None
         candidate = self.path / identifier.relpath()
         if self._fresh(candidate):
             return candidate
@@ -592,7 +628,7 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
             )
         except (subprocess.CalledProcessError, OSError) as e:
             # a failed check is not an absent asset, so say so rather than reporting a silent miss
-            logging.warning('%s: could not check %s on %s: %s', type(self).__name__, identifier.relpath(), self._provider, e)
+            logging.warning('%s: could not check %s on %s: %s', type(self).__name__, identifier.relpath(), self._provider, self._reason(e))
             return self._serve_stale(identifier, candidate)
         return candidate if output.decode().strip().splitlines()[-1:] == ['1'] else None
 
@@ -611,7 +647,8 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         argv = ['ros2', 'run', 'arena_assets', 'arena_assets', '-s', 'net', self._provider, 'list']
         if self._annotated:
             return argv
-        return [*argv, '--children', *((self._list_prefix,) if self._list_prefix else ())]
+        containing = ('--containing', self._list_containing) if self._list_containing else ()
+        return [*argv, '--children', *((self._list_prefix,) if self._list_prefix else ()), *containing]
 
     def _cached_listing(self) -> list[str] | None:
         """Bucket listing from disk if younger than the listing TTL, else None."""
@@ -639,11 +676,9 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         if cached is not None:
             return cached
         try:
-            return self._store_listing(subprocess.check_output(self._listing_args(), stderr=subprocess.DEVNULL))
-        except (subprocess.CalledProcessError, OSError):
-            import traceback
-
-            logging.warning(traceback.format_exc())
+            return self._store_listing(subprocess.check_output(self._listing_args(), stderr=subprocess.PIPE))
+        except (subprocess.CalledProcessError, OSError) as e:
+            logging.warning('%s: listing %s failed: %s', type(self).__name__, self._provider, self._reason(e))
             return []
 
     async def _listing_async(self) -> list[str]:
@@ -658,10 +693,8 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         self._listing_inflight[key] = future
         try:
             lines = self._store_listing(await self.check_output_async(self._listing_args()))
-        except (subprocess.CalledProcessError, OSError):
-            import traceback
-
-            logging.warning(traceback.format_exc())
+        except (subprocess.CalledProcessError, OSError) as e:
+            logging.warning('%s: listing %s failed: %s', type(self).__name__, self._provider, self._reason(e))
             lines = []
         finally:
             del self._listing_inflight[key]
@@ -680,11 +713,15 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         List all assets available. When *network* is True, also queries the
         remote provider (bucket listing cached on disk for ARENA_MODELS_TTL seconds).
         """
+        if self._off():
+            return
         yield from super(SimplePathResolver, self).listall(**kwargs)
         if network:
             yield from self._parse_listing(self._listing())
 
     async def listall_async(self, *, network: bool = False, **kwargs: bool) -> list[IdentifierT]:
+        if self._off():
+            return []
         result = await super(SimplePathResolver, self).listall_async(**kwargs)
         if network:
             result.extend(self._parse_listing(await self._listing_async()))
@@ -704,9 +741,10 @@ class NetResolver(SimplePathResolver[IdentifierT], ResolverBase[IdentifierT], ty
         ttl: int | None = None,
         annotated: bool = True,
         list_prefix: str = '',
+        list_containing: str = '',
     ) -> Iterable[Self]:
         for provider in providers:
-            yield cls(_T, provider=provider, formats=formats, ttl=ttl, annotated=annotated, list_prefix=list_prefix)
+            yield cls(_T, provider=provider, formats=formats, ttl=ttl, annotated=annotated, list_prefix=list_prefix, list_containing=list_containing)
 
 
 class FallbackResolver(ResolverBase[IdentifierT], typing.Generic[IdentifierT]):
