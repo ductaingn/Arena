@@ -78,7 +78,7 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 
 | Type | Target | Params | Graph | `world.yaml` |
 |---|---|---|---|---|
-| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged), `leave_demand: true` (the demand stays at the old spot) | `at`; with `leave_demand` the demand facts go to a new `obj:<name>_demand` at the old pose | the pose, for a world object, its height, roll and pitch kept; with `leave_demand` its `humansim:` block keeps only `seats` |
+| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged), `leave_demand: true` (the demand stays at the old spot) | `at`; with `leave_demand` the demand facts, `affords` among them, go to a new `obj:<name>_demand` at the old spot, turned so its +x is the model's front | the pose, for a world object, its height, roll and pitch kept; with `leave_demand` its `humansim:` block keeps only `seats` |
 | `insert` | `obj:<new name>` | `model`, `x`, `y`, `z` (0), `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
 | `remove` | `obj:<name>` | none | the entity and every fact about it | the object, and its `kg.yaml` entity |
 | `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`, `clear: true` (first drop all demand, the formation included) | `serves`, `satisfies`, `dwells` (`from: edit:<id>`), `has_formation` (by `clear`) | the `humansim:` block, for a world object |
@@ -88,7 +88,7 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 | `layout` | `wall:<level>/<index>`, `wall:<level>` to add | `op: add` (`path`, `closed`, `kind`, `material`), `move` (`path` or `offset`), `remove` | none | the `walls:` path at that index |
 
 - **Scenario objects** (the fountain of `queue`) change only in the graph. The [reader](#reading-a-site) writes them into the scenario.
-- **Demand-only nodes** (`obj:<name>_demand`, an object without `model`) also live only in the graph. The reader writes each as a PEDS target without an obstacle (`model: ""`). A formation anchored at `<name>` by name is anchored at the new node. They can be moved, removed and given another function like any graph object; the generator never moves or copies them, having no model.
+- **Demand-only nodes** (`obj:<name>_demand`, an object without `model`) also live only in the graph. The reader writes each as a PEDS target without an obstacle (`model: ""`). Without a model the runtime uses an object from its +x side, as it does a model without `face`, so the node is turned to where its model's front looked and people queue on the same side as before the move. A formation anchored at `<name>` by name is anchored at the new node. They can be moved, removed and given another function like any graph object; the generator never moves or copies them, having no model.
 - **Doors:** a moved or added door must lie on a wall. A door moved or removed from a gap left in its wall gets the gap closed with a wall styled like the wall at its start. Walls drawn through a door are cut at runtime anyway.
 - **Walls:** only `walls:` paths count. Walls from a zone's `walls: outline` are not addressable.
 - **Checks** stay basic: unknown target, taken name, door off a wall, then `World.validate` and the graph's vocabulary. Rules about rooms or overlap belong to the edit generator.
@@ -111,7 +111,7 @@ edits:
 
 - **Determinism:** one `random.Random` per step, keyed by the current world's key (`<base>__<id>`, which names the chain so far), the scenario, seed, step, type and index. Candidates are sorted before every draw and spots rounded to cm, so the same site, seed and code give the same edits and a shorter chain is a prefix of a longer one. No two chains reach the same world at the same step: a duplicate is drawn again, and that retry may take any object, not only one with a need. Footprints come from asset bounds where they resolve, else a 0.8 m box, so a machine with other assets at hand can draw other spots; the manifest carries `generator_version`.
 - **On the floor:** spots are drawn on the floor, so a world object standing higher than 5 cm (on a table, a shelf or a wall) is neither moved nor copied.
-- **Spots** (`move`, `insert`): inside an allowed zone (not a stair, elevator, lift or shaft), the footprint clear of the zone's edge, walls, door spans (0.8 m) and, by 0.3 m, every object's footprint. A moved object's own old footprint counts too, so the inert copy of its control never overlaps the original.
+- **Spots** (`move`, `insert`): inside an allowed zone (not a stair, elevator, lift or shaft), the footprint clear of the zone's edge, walls, door spans (0.8 m) and, by 0.3 m, every object's footprint. A moved object's own old footprint counts too, so the inert copy of its control never overlaps the original. Every spot stands against a wall of its zone: it is drawn along the parts of the zone's edges a wall runs along (within 0.3 m of the edge's line and 10° of its direction, parts shorter than 0.6 m skipped, so a door gap only cuts its edge and a wall stub or a wall meeting the edge gives none), as close as those gaps allow, with a wall behind the middle and both ends of the object's back, and the model is turned so its annotated front (`face` in its annotation.yaml, +x without one) points away from that wall into the room; a local move draws only along the walls within reach.
 
 | Type | Target | Params drawn |
 |---|---|---|
@@ -137,7 +137,7 @@ The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type
 
 ```yaml
 format: flowedit-generated/1
-generator_version: 2
+generator_version: 4
 base: hospital_1
 scenario: queue
 seed: 0

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from arena_simulation_setup.shared.world import Door, Schedule
     from arena_simulation_setup.tree.World.model import Level, Zone
 
-GENERATOR_VERSION = 2
+GENERATOR_VERSION = 4
 MANIFEST_FORMAT = "flowedit-generated/1"
 MAX_TRIES = 50
 #: Function fields the generator samples. The reader writes `dwell` into the `duration` of the step at the object; `satisfies` is not drawn yet.
@@ -47,7 +47,16 @@ EXCLUDED_ZONES = ("stair", "elevator", "lift", "shaft")
 FLOOR_HEIGHT_M = 0.05
 #: Suffix of the `inert_object` control's copy.
 INERT_SUFFIX = "_inert"
-YAWS = (0.0, 1.5708, 3.1416, -1.5708)
+#: Angle of a model's annotated front (`face` in annotation.yaml) in its own frame; a model without one faces +x.
+FACE_ANGLE = {"+x": 0.0, "+y": math.pi / 2, "-x": math.pi, "-y": -math.pi / 2}
+#: A wall running along a zone edge at most this far (m) off the edge's line stands behind that part of the edge, and objects go against it.
+WALL_SNAP_M = 0.3
+#: Most a wall may turn away from a zone edge's direction (rad) and still run along it.
+WALL_PARALLEL_RAD = math.radians(10.0)
+#: Shorter walled parts of a zone edge (jogs round a pillar, a door reveal, a wall stub) take no object.
+WALL_EDGE_MIN_M = 0.6
+#: Slack (m) past the wall gap, so spots rounded to `DECIMALS` stay valid.
+WALL_SLACK_M = 0.01
 POINT_TRIES = 30
 MARGIN_M = 0.3
 WALL_GAP_M = 0.05
@@ -55,6 +64,10 @@ DOOR_CLEARANCE_M = 0.8
 #: Half side of the box standing in for an object whose asset gives no footprint.
 FALLBACK_HALF_M = 0.4
 DECIMALS = 2
+#: Farthest (m) rounding a spot to `DECIMALS` moves it.
+ROUNDING_M = math.sqrt(2.0) * 0.5 * 10.0**-DECIMALS
+#: Inset (m) of the back's ends from the footprint's sides where a wall must stand behind it too.
+BACK_END_INSET_M = 0.1
 #: Door layout ops and their weights; a door is moved along its wall by `DOOR_SHIFT_M`, an added door spans `DOOR_SPAN_M`.
 DOOR_OPS = ((LayoutOp.MOVE, 0.5), (LayoutOp.ADD, 0.25), (LayoutOp.REMOVE, 0.25))
 DOOR_SHIFT_M = (0.5, 2.0)
@@ -148,10 +161,11 @@ def _prefer(rng: random.Random, preferred: Sequence[str], others: Sequence[str],
 
 
 _FOOTPRINTS: dict[tuple[Path, str], shapely.Polygon | None] = {}
+_FACES: dict[tuple[Path, str], str | None] = {}
 
 
 def resolve_footprints(site: Site, models: Sequence[str]) -> None:
-    """Resolve the footprint ring of each of `models` at the origin, as the site's world resolves its assets, None when unannotated."""
+    """Resolve the footprint ring and annotated front (`face`) of each of `models` at the origin, as the site's world resolves its assets, None when unannotated."""
     from arena_simulation_setup.shared.entities import Obstacle
     from arena_simulation_setup.tree import Identifier
     from arena_simulation_setup.tree.World.view import WorldView, world_assets
@@ -161,11 +175,14 @@ def resolve_footprints(site: Site, models: Sequence[str]) -> None:
         return
     with world_assets(WorldView(site.root), site.world):
         for model in missing:
+            probe = Obstacle.parse({"name": "probe", "model": model, "pose": [0.0, 0.0, 0.0]})
             try:
-                polygon = Identifier._run_sync(Obstacle.parse({"name": "probe", "model": model, "pose": [0.0, 0.0, 0.0]}).footprint())
-            except Exception:  # noqa: BLE001 - any failure to resolve leaves the fallback box
-                polygon = None
+                polygon = Identifier._run_sync(probe.footprint())
+                face = (Identifier._run_sync(probe.model.resolve()).annotation or {}).get("face")
+            except Exception:  # noqa: BLE001 - any failure to resolve leaves the fallback box facing +x
+                polygon, face = None, None
             _FOOTPRINTS[(site.root, model)] = polygon
+            _FACES[(site.root, model)] = None if face is None else str(face)
 
 
 def footprint(root: Path, model: str, x: float, y: float, yaw: float) -> shapely.Polygon:
@@ -177,6 +194,11 @@ def footprint(root: Path, model: str, x: float, y: float, yaw: float) -> shapely
     if local is None:
         local = shapely.box(-FALLBACK_HALF_M, -FALLBACK_HALF_M, FALLBACK_HALF_M, FALLBACK_HALF_M)
     return shapely.affinity.translate(shapely.affinity.rotate(local, yaw, origin=(0, 0), use_radians=True), xoff=x, yoff=y)
+
+
+def front_angle(root: Path, model: str) -> float:
+    """The angle of `model`'s annotated front in its own frame, once resolved (`resolve_footprints`), +x without one."""
+    return FACE_ANGLE.get(_FACES.get((root, model)) or "+x", 0.0)
 
 
 def allowed_zones(level: Level) -> list[Zone]:
@@ -195,17 +217,105 @@ def _model(site: Site, obj: str) -> str | None:
     return None if model is None else str(model)
 
 
+Segment = tuple[tuple[float, float], tuple[float, float]]
+
+
+@attrs.frozen
+class WallPiece:
+    """A part `line` of a zone edge with a wall behind it: the edge's unit `direction` and unit `normal` into the zone,
+    a point `origin` on the edge's line, and the `walls` (start, end) running along the edge."""
+
+    line: shapely.LineString
+    origin: tuple[float, float]
+    direction: tuple[float, float]
+    normal: tuple[float, float]
+    walls: tuple[Segment, ...]
+
+    def depth(self, x: float, y: float) -> float:
+        """How far `x`, `y` lies into the zone from the edge's line (m), negative behind it."""
+        return (x - self.origin[0]) * self.normal[0] + (y - self.origin[1]) * self.normal[1]
+
+    def offset(self, x: float, y: float) -> float | None:
+        """The depth of the wall behind `x`, `y`: of the walls along the edge at `x`, `y`'s place along it and within
+        `WALL_SNAP_M` of its line, the one lying furthest into the zone; None without one."""
+        (ox, oy), (ux, uy) = self.origin, self.direction
+        t = (x - ox) * ux + (y - oy) * uy
+        best = None
+        for (sx, sy), (ex, ey) in self.walls:
+            ts, te = (sx - ox) * ux + (sy - oy) * uy, (ex - ox) * ux + (ey - oy) * uy
+            if te == ts or not min(ts, te) <= t <= max(ts, te):
+                continue
+            k = (t - ts) / (te - ts)
+            d = self.depth(sx + (ex - sx) * k, sy + (ey - sy) * k)
+            if abs(d) <= WALL_SNAP_M and (best is None or d > best):
+                best = d
+        return best
+
+
+def wall_pieces(shape: shapely.Polygon, walls: Sequence[Segment]) -> list[WallPiece]:
+    """The parts of `shape`'s outer edges with a wall behind them, in ring order: where a wall runs along the edge, at
+    most `WALL_PARALLEL_RAD` off its direction and `WALL_SNAP_M` off its line. Each part is at least `WALL_EDGE_MIN_M`
+    long, so a door gap only cuts its edge and a short wall stub or a wall meeting the edge across gives no part."""
+    import shapely
+
+    ring = list(shape.exterior.coords)
+    out: list[WallPiece] = []
+    for a, b in zip(ring, ring[1:], strict=False):
+        length = math.dist(a, b)
+        if length < WALL_EDGE_MIN_M:
+            continue
+        ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+        mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        nx, ny = (-uy, ux) if shape.covers(shapely.Point(mx - uy * 0.1, my + ux * 0.1)) else (uy, -ux)
+        along: list[Segment] = []
+        spans: list[tuple[float, float]] = []
+        for (sx, sy), (ex, ey) in walls:
+            wl = math.hypot(ex - sx, ey - sy)
+            if wl == 0.0 or abs(ux * (ey - sy) - uy * (ex - sx)) / wl > math.sin(WALL_PARALLEL_RAD):
+                continue
+            ts, te = (sx - a[0]) * ux + (sy - a[1]) * uy, (ex - a[0]) * ux + (ey - a[1]) * uy
+            ds, de = (sx - a[0]) * nx + (sy - a[1]) * ny, (ex - a[0]) * nx + (ey - a[1]) * ny
+            # the share of the wall within WALL_SNAP_M of the edge's line, its depth changing linearly along it
+            if de == ds:
+                lo, hi = (0.0, 1.0) if abs(ds) <= WALL_SNAP_M else (1.0, 0.0)
+            else:
+                k1, k2 = (-WALL_SNAP_M - ds) / (de - ds), (WALL_SNAP_M - ds) / (de - ds)
+                lo, hi = max(0.0, min(k1, k2)), min(1.0, max(k1, k2))
+            if lo > hi:
+                continue
+            t0, t1 = sorted((ts + (te - ts) * lo, ts + (te - ts) * hi))
+            t0, t1 = max(t0, 0.0), min(t1, length)
+            if t1 > t0:
+                along.append(((sx, sy), (ex, ey)))
+                spans.append((t0, t1))
+        merged: list[list[float]] = []
+        for t0, t1 in sorted(spans):
+            if merged and t0 <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], t1)
+            else:
+                merged.append([t0, t1])
+        for t0, t1 in merged:
+            if t1 - t0 >= WALL_EDGE_MIN_M:
+                line = shapely.LineString([(a[0] + ux * t0, a[1] + uy * t0), (a[0] + ux * t1, a[1] + uy * t1)])
+                out.append(WallPiece(line, (a[0], a[1]), (ux, uy), (nx, ny), tuple(along)))
+    return out
+
+
 class Spots:
-    """Valid spots on one level: in an allowed zone, clear of walls, door spans and every object's footprint, a moved object's own included."""
+    """Valid spots on one level: in an allowed zone, clear of walls, door spans and every object's footprint, a moved
+    object's own included. Spots stand against a wall of their zone, as close as those gaps allow, the model's annotated
+    front turned away from the wall into the room."""
 
     def __init__(self, site: Site, level_id: str) -> None:
         import shapely
 
         self.site, self.level_id = site, level_id
         self.level = site.world.levels[level_id]
-        walls = [shapely.LineString([(w.start.x, w.start.y), (w.end.x, w.end.y)]) for w in self.level.all_walls]
+        self.wall_segments: list[Segment] = [((w.start.x, w.start.y), (w.end.x, w.end.y)) for w in self.level.all_walls]
+        walls = [shapely.LineString(segment) for segment in self.wall_segments]
         doors = [shapely.LineString([(d.start.x, d.start.y), (d.end.x, d.end.y)]) for d in self.level.doors]
-        self.walls = shapely.union_all(walls).buffer(WALL_GAP_M) if walls else shapely.Polygon()
+        self.wall_lines = shapely.union_all(walls) if walls else shapely.GeometryCollection()
+        self.walls = self.wall_lines.buffer(WALL_GAP_M) if walls else shapely.Polygon()
         self.doors = shapely.union_all(doors).buffer(DOOR_CLEARANCE_M) if doors else shapely.Polygon()
         self.shapes = {z.name: z.shape() for z in self.level.zones if len(z.polygon) >= 3}
         self.inner = {name: shape.buffer(-WALL_GAP_M) for name, shape in self.shapes.items()}
@@ -221,29 +331,78 @@ class Spots:
         grown = shape.buffer(MARGIN_M)
         return not any(other.intersects(grown) for other in self.placed.values())
 
-    def in_zone(self, rng: random.Random, model: str, zone: Zone) -> tuple[float, float, float] | None:
-        """A valid pose drawn uniformly in `zone`."""
-        import shapely
+    def wall_edges(self, zone: Zone) -> list[WallPiece]:
+        """The parts of `zone`'s edges with a wall behind them (`wall_pieces`), in ring order."""
+        return wall_pieces(self.shapes[zone.name], self.wall_segments)
 
-        shape = self.shapes[zone.name]
-        x0, y0, x1, y1 = shape.bounds
+    def against_wall(self, rng: random.Random, model: str, zone: Zone, accept: Callable[[float, float], bool], around: tuple[float, float, float] | None = None) -> tuple[float, float, float] | None:
+        """A valid pose in `zone` against one of its walls that `accept` takes: a point drawn along the walled parts of
+        its edges by length (only those within `around` = x, y, radius when given), the model turned so its front points
+        along the edge's normal, its back as close to the wall behind and the zone edge as the wall gap allows, a wall
+        behind the middle and both ends of the back (`backs_onto_wall`)."""
+        import shapely
+        import shapely.affinity
+
+        resolve_footprints(self.site, [model])
+        pieces = self.wall_edges(zone)
+        if around is not None:
+            disk = shapely.Point(around[0], around[1]).buffer(around[2])
+            near: list[WallPiece] = []
+            for piece in pieces:
+                clipped = piece.line.intersection(disk)
+                near += [attrs.evolve(piece, line=part) for part in getattr(clipped, "geoms", [clipped]) if isinstance(part, shapely.LineString) and part.length > 0.05]
+            pieces = near
+        if not pieces:
+            return None
+        lengths = [piece.line.length for piece in pieces]
+        local = footprint(self.site.root, model, 0.0, 0.0, 0.0)
         for _ in range(POINT_TRIES):
-            x, y, yaw = _round(rng.uniform(x0, x1)), _round(rng.uniform(y0, y1)), rng.choice(YAWS)
-            if shape.covers(shapely.Point(x, y)) and self.valid(model, zone, x, y, yaw):
+            piece = rng.choices(pieces, weights=lengths)[0]
+            nx, ny = piece.normal
+            p = piece.line.interpolate(rng.uniform(0.0, 1.0), normalized=True)
+            offset = piece.offset(p.x, p.y)
+            if offset is None:
+                continue
+            yaw = math.atan2(ny, nx) - front_angle(self.site.root, model)
+            yaw = round(math.atan2(math.sin(yaw), math.cos(yaw)), 4) + 0.0
+            turned = shapely.affinity.rotate(local, yaw, origin=(0, 0), use_radians=True)
+            back = max(-(vx * nx + vy * ny) for vx, vy in turned.exterior.coords)
+            # the back stops at the wall gap from both the wall line and the zone edge, whichever lies further in
+            behind = max(offset, 0.0) + WALL_GAP_M + WALL_SLACK_M
+            x, y = _round(p.x + nx * (behind + back)), _round(p.y + ny * (behind + back))
+            if accept(x, y) and backs_onto_wall(piece, turned, x, y) and self.valid(model, zone, x, y, yaw):
                 return x, y, yaw
         return None
 
-    def near(self, rng: random.Random, model: str, zone: Zone, x: float, y: float) -> tuple[float, float, float] | None:
-        """A valid pose in `zone` `LOCAL_DISTANCE_M` away from `x`, `y`."""
-        import shapely
+    def in_zone(self, rng: random.Random, model: str, zone: Zone) -> tuple[float, float, float] | None:
+        """A valid pose against a wall of `zone`."""
+        return self.against_wall(rng, model, zone, lambda _x, _y: True)
 
-        shape = self.shapes[zone.name]
-        for _ in range(POINT_TRIES):
-            r, theta = rng.uniform(*LOCAL_DISTANCE_M), rng.uniform(0.0, 2 * math.pi)
-            nx, ny, yaw = _round(x + r * math.cos(theta)), _round(y + r * math.sin(theta)), rng.choice(YAWS)
-            if shape.covers(shapely.Point(nx, ny)) and self.valid(model, zone, nx, ny, yaw):
-                return nx, ny, yaw
-        return None
+    def near(self, rng: random.Random, model: str, zone: Zone, x: float, y: float) -> tuple[float, float, float] | None:
+        """A valid pose against a wall of `zone` `LOCAL_DISTANCE_M` away from `x`, `y`."""
+        lo, hi = LOCAL_DISTANCE_M
+        # wall points a little beyond reach still give spots within it, the object standing out from the wall
+        return self.against_wall(rng, model, zone, lambda nx, ny: lo <= math.dist((nx, ny), (x, y)) <= hi, around=(x, y, hi + 1.0))
+
+
+def backs_onto_wall(piece: WallPiece, turned: shapely.Polygon, x: float, y: float) -> bool:
+    """Whether a wall of `piece` stands behind the footprint `turned` placed at `x`, `y`: behind the middle of its back
+    at the wall gap, the slack and the rounding from the wall line or from the zone edge, whichever lies further in, and
+    behind both ends of its back (`BACK_END_INSET_M` in from its sides), so the object never backs onto an opening."""
+    (nx, ny), (ux, uy) = piece.normal, piece.direction
+    coords = list(turned.exterior.coords)
+    back = piece.depth(x, y) - max(-(vx * nx + vy * ny) for vx, vy in coords)
+    lo, hi = min(vx * ux + vy * uy for vx, vy in coords), max(vx * ux + vy * uy for vx, vy in coords)
+    inset = min(BACK_END_INSET_M, (hi - lo) / 4.0)
+    for i, along in enumerate((0.0, lo + inset, hi - inset)):
+        wall = piece.offset(x + ux * along, y + uy * along)
+        if wall is None:
+            return False
+        gap = back - wall
+        most = WALL_GAP_M + WALL_SLACK_M + max(-wall, 0.0) + ROUNDING_M if i == 0 else math.inf
+        if not WALL_GAP_M - ROUNDING_M <= gap <= most:
+            return False
+    return True
 
 
 _SPOTS: list[Spots] = []
