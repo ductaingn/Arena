@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from arena_simulation_setup.kg import dumps, write
+from arena_simulation_setup.tree.World.write import to_yaml
 
 from ..scenario.cli import world_root
 from .build import build
@@ -67,7 +68,7 @@ def _cmd_edit(args: argparse.Namespace) -> int:
     for note in notes:
         print(f"note: {note}", file=sys.stderr)
     if not args.write:
-        print(yaml.safe_dump({"world": site.name, **dump_edits(site)}, sort_keys=False, default_flow_style=None, width=1 << 16), end="")
+        print(to_yaml({"world": site.name, **dump_edits(site)}), end="")
         return 0
     print(f"wrote {save(site)}")
     return 0
@@ -81,10 +82,6 @@ def _types(text: str) -> list[EditType]:
         raise argparse.ArgumentTypeError(f"edit types are {', '.join(EditType)}, got {text!r}") from exc
 
 
-def _dump(doc: object) -> str:
-    return yaml.safe_dump(doc, sort_keys=False, default_flow_style=None, width=1 << 16)
-
-
 def _cmd_generate(args: argparse.Namespace) -> int:
     root = world_root(args.worlds, args.world)
     notes: list[str] = []
@@ -94,7 +91,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     for note in notes:
         print(f"note: {note}", file=sys.stderr)
     if not args.write:
-        print(_dump(dump_manifest(site, chains, args.seed, args.per_type, args.steps, chain_controls=made)), end="")
+        print(to_yaml(dump_manifest(site, chains, args.seed, args.per_type, args.steps, chain_controls=made)), end="")
         return 0
     worlds = {chain.site.name: save(chain.site) for chain in chains}
     worlds.update({control.name: save(control) for pairs in made.values() for _, control in pairs})
@@ -105,7 +102,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         return 0
     out = args.manifest or next(iter(worlds.values())).parent.parent / MANIFESTS / f"{site.name}__seed{args.seed}.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(_dump(dump_manifest(site, chains, args.seed, args.per_type, args.steps, worlds, made)))
+    out.write_text(to_yaml(dump_manifest(site, chains, args.seed, args.per_type, args.steps, worlds, made)))
     print(f"wrote {out}")
     return 0
 
@@ -131,7 +128,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--worlds", type=Path, default=None, help="worlds root to read (default: the ARENA_WORLD_PATH roots, then $ARENA_DIR/arena_simulation_setup/worlds, then the resolvers)")
     p.add_argument("--write", action="store_true", help="save the edited world (default: print the edit)")
     p.set_defaults(fn=_cmd_edit)
-    p = verbs.add_parser("generate", help="sample edits of every type from a seed and save the edited worlds", description="sample per edit type --per-type chains of --steps edits on a world (and scenario) from --seed, a dry run that prints the manifest without --write, which saves every edited world under $ARENA_ASSETS_DIR_LOCAL/worlds and the manifest beside them")
+    p = verbs.add_parser(
+        "generate",
+        help="sample edits of every type from a seed and save the edited worlds",
+        description="sample per edit type --per-type chains of --steps edits on a world (and scenario) from --seed, a dry run that prints the manifest without --write, which saves every edited world under $ARENA_ASSETS_DIR_LOCAL/worlds and the manifest beside them",
+    )
     p.add_argument("world", help="the world to edit, shipped or saved by an earlier edit")
     p.add_argument("--scenario", default=None, help="the scenario whose objects join the graph and travel with each edited world (default: world objects only)")
     p.add_argument("--seed", type=int, default=0, help="seed of the edits (default 0)")

@@ -36,6 +36,9 @@ ID_LENGTH = 8
 SERVICE_KEYS = ("capacity", "interaction_radius")
 DWELL_KEYS = ("mean", "std", "clip_low", "clip_high")
 DEMAND_VERBS = ("serves", "satisfies", "has_formation", "dwells")
+FUNCTION_PARAMS = ("type", *SERVICE_KEYS, "satisfies", "dwell", "clear")
+#: Params that only switch an operation on: false names the same edit as leaving them out.
+FLAGS = ("clear", "remove")
 DOOR_FIELDS = ("kind", "width", "height", "material", "activation_distance", "transition_time", "hold_time", "swing_direction")
 WALL_FIELDS = ("closed", "kind", "material")
 _ON_WALL_M = 0.05
@@ -67,6 +70,11 @@ def _as_floats(value: Any) -> Any:  # noqa: ANN401 - YAML input
     return value
 
 
+def _canonical(params: Mapping[str, Any]) -> dict[str, Any]:
+    """`params` as they name an edit: ints as floats, false `FLAGS` left out."""
+    return {k: _as_floats(v) for k, v in params.items() if v or k not in FLAGS}
+
+
 @attrs.frozen
 class Edit:
     """One edit: its `type`, the `target` id it changes, its `params`, and the world it was applied to."""
@@ -79,7 +87,7 @@ class Edit:
     @property
     def id(self) -> str:
         """Short hash of the whole record, the parent included, so it also names the chain."""
-        record = json.dumps(_as_floats({"parent": self.parent, "type": self.type, "target": self.target, "params": self.params}), sort_keys=True)
+        record = json.dumps({"parent": self.parent, "type": self.type, "target": self.target, "params": _canonical(self.params)}, sort_keys=True)
         return hashlib.sha256(record.encode()).hexdigest()[:ID_LENGTH]
 
     def dump(self) -> dict[str, Any]:
@@ -232,7 +240,9 @@ def _move(site: Site, edit: Edit) -> None:
     found = _world_object(site.world, _name(edit.target, "obj"))
     if found is not None:
         level, i = found
-        obstacle = attrs.evolve(level.objects[i], pose=Pose(position=Position(x, y), orientation=Orientation.from_yaw(yaw)))
+        old = level.objects[i].pose
+        roll, pitch, _ = old.orientation.to_euler()
+        obstacle = attrs.evolve(level.objects[i], pose=Pose(position=Position(x, y, old.position.z), orientation=Orientation.from_euler((roll, pitch, yaw))))
         if level is site.world.levels[level_id]:
             level.objects[i] = obstacle
         else:
@@ -242,7 +252,7 @@ def _move(site: Site, edit: Edit) -> None:
 
 
 def _insert(site: Site, edit: Edit) -> None:
-    """Insert a world object: `model`, `x`, `y`, `yaw` (default 0), `level`, and the demand `function` takes."""
+    """Insert a world object: `model`, `x`, `y`, `z` (default 0), `yaw` (default 0), `level`, and the demand `function` takes."""
     from arena_simulation_setup.shared.entities import Obstacle
     from arena_simulation_setup.tree.World.write import short_identifier
 
@@ -255,14 +265,14 @@ def _insert(site: Site, edit: Edit) -> None:
         raise ValueError(f"{name!r} is already taken")
     level = _level(site.world, params.pop("level", None))
     level_id = next(k for k, v in site.world.levels.items() if v is level)
-    x, y, yaw = float(params.pop("x")), float(params.pop("y")), float(params.pop("yaw", 0.0))
-    obstacle: Obstacle = Obstacle.parse({"name": name, "model": params.pop("model"), "pose": [x, y, yaw]})
+    x, y, z, yaw = (float(params.pop(k, 0.0)) for k in ("x", "y", "z", "yaw"))
+    obstacle: Obstacle = Obstacle.parse({"name": name, "model": params.pop("model"), "pose": [x, y, z, 0.0, 0.0, yaw]})
     level.objects.append(obstacle)
     model = short_identifier(obstacle.model)
     site.graph.add_entity(edit.target, {"model": model[0] if isinstance(model, list) else model})
     site.graph.add_fact(edit.target, "at", f"floor:{level_id}", {"x": x, "y": y, "yaw": yaw})
     if params:
-        _function(site, attrs.evolve(edit, params=params))
+        _set_demand(site, edit.target, params, f"edit:{edit.id}")
     _rederive(site.world, site.graph)
 
 
@@ -326,13 +336,9 @@ def _set_dwell(graph: Scene, obj: str, dwell: Any, origin: str) -> None:  # noqa
         graph.add_fact(obj, "dwells", float(dwell), {"from": origin})
 
 
-def _function(site: Site, edit: Edit) -> None:
-    """Change an object's demand: `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`.
-
-    `clear: true` first drops all of it, the formation included, leaving an inert object; the other params then set demand anew.
-    """
-    _check_params(edit.params, ("type", *SERVICE_KEYS, "satisfies", "dwell", "clear"))
-    obj, params = edit.target, edit.params
+def _set_demand(site: Site, obj: str, params: Mapping[str, Any], origin: str) -> None:
+    """Set the demand of `obj` from `FUNCTION_PARAMS`, its dwell traced to `origin`."""
+    _check_params(params, FUNCTION_PARAMS)
     if obj not in site.graph.entities or kind_of(obj) != "obj":
         raise ValueError(f"{obj} is no object of the graph")
     found = _world_object(site.world, _name(obj, "obj"))
@@ -350,10 +356,15 @@ def _function(site: Site, edit: Edit) -> None:
     if params.get("satisfies"):
         _set_satisfies(site.graph, obj, params["satisfies"], block)
     if "dwell" in params:
-        _set_dwell(site.graph, obj, params["dwell"], f"edit:{edit.id}")
+        _set_dwell(site.graph, obj, params["dwell"], origin)
     if found is not None and block is not None:
         level, i = found
         level.objects[i] = attrs.evolve(level.objects[i], humansim=block)
+
+
+def _function(site: Site, edit: Edit) -> None:
+    """Change an object's demand: `type`, `capacity`, `interaction_radius`, `satisfies`, `dwell`, `clear` to drop it all first."""
+    _set_demand(site, edit.target, edit.params, f"edit:{edit.id}")
 
 
 def _set_presets(semantics: list[Any], preset: str, params: Mapping[str, Any] | None) -> list[Any]:
@@ -372,6 +383,7 @@ def _access(site: Site, edit: Edit) -> None:
 
     params, world = edit.params, site.world
     remove = bool(params.get("remove", False))
+    settings = {k: v for k, v in params.items() if k != "remove"}
     if kind_of(edit.target) == "door":
         _check_params(params, ("locked", "authorized", "unlock_on", "remove"))
         found = _door(world, _name(edit.target, "door"))
@@ -380,7 +392,7 @@ def _access(site: Site, edit: Edit) -> None:
         level, i = found
         door = level.doors[i]
         gate = {"authorized": [], "locked": False, **next(iter(presets(door.semantics, "gate")), {})}
-        gate.update({k: v for k, v in params.items() if k != "remove"})
+        gate.update(settings)
         level.doors[i] = attrs.evolve(door, semantics=_set_presets(door.semantics, "gate", None if remove else {k: v for k, v in gate.items() if v is not None}))
     elif kind_of(edit.target) == "schedule":
         _check_params(params, ("regime", "windows", "default", "remove"))
@@ -396,7 +408,7 @@ def _access(site: Site, edit: Edit) -> None:
                 i = len(world.schedules) - 1
             schedule = world.schedules[i]
             current = {"windows": [], **next(iter(presets(schedule.semantics, "schedule")), {})}
-            current.update(params)
+            current.update(settings)
             if not current.get("regime"):
                 raise ValueError(f"{edit.target} needs a regime")
             world.schedules[i] = attrs.evolve(schedule, semantics=_set_presets(schedule.semantics, "schedule", {k: v for k, v in current.items() if v is not None}))
@@ -579,6 +591,7 @@ def save(site: Site) -> Path:
     """Write the edited world to the writable local worlds root under `site.name`, its graph and `edits.yaml` beside `world.yaml`."""
     from arena_simulation_setup.tree.World import WorldIdentifier
     from arena_simulation_setup.tree.World.view import LEVEL_ORIGINS_FILE, world_assets
+    from arena_simulation_setup.tree.World.write import to_yaml
 
     if not site.edits:
         raise ValueError(f"{site.name} has no edits to save")
@@ -595,5 +608,5 @@ def save(site: Site) -> Path:
     with world_assets(view, site.world):
         view.save(site.world)
     write(site.graph, view.path / GRAPH)
-    (view.path / EDITS).write_text(yaml.safe_dump(dump_edits(site), sort_keys=False, default_flow_style=None, width=1 << 16))
+    (view.path / EDITS).write_text(to_yaml(dump_edits(site)))
     return view.path

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
+from arena_simulation_setup.generative.flowedit.build import presets
 from arena_simulation_setup.generative.flowedit.cli import main
-from arena_simulation_setup.generative.flowedit.edit import EDITS, GRAPH, Site, apply, open_site, save
+from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EDITS, GRAPH, Site, apply, open_site, save
 from arena_simulation_setup.kg import Scene, Value, dumps, load
 
+if TYPE_CHECKING:
+    from arena_simulation_setup.shared.entities import Obstacle
+
 pytest.importorskip("numpy")
+pytestmark = pytest.mark.usefixtures("local_root")
 
 WORLDS = Path(__file__).resolve().parents[2] / "worlds"
 HOSPITAL = WORLDS / "hospital_1"
@@ -24,17 +27,6 @@ EDITS_OF_EVERY_TYPE: list[tuple[str, str, dict[str, Any]]] = [
     ("access", "door:or_door", {"locked": True, "authorized": ["doctor_1"], "unlock_on": "alarm"}),
     ("layout", "door:reception_door", {"offset": [0.0, -0.5]}),
 ]
-
-
-@pytest.fixture(autouse=True)
-def local_worlds(tmp_path: Path) -> Iterator[Path]:
-    previous = os.environ.get("ARENA_ASSETS_DIR_LOCAL")
-    os.environ["ARENA_ASSETS_DIR_LOCAL"] = str(tmp_path)
-    yield tmp_path / "worlds"
-    if previous is None:
-        del os.environ["ARENA_ASSETS_DIR_LOCAL"]
-    else:
-        os.environ["ARENA_ASSETS_DIR_LOCAL"] = previous
 
 
 @pytest.fixture(scope="module")
@@ -51,11 +43,11 @@ def _rooms(scene: Scene, ref: str) -> list[str]:
 
 
 @pytest.mark.parametrize(("edit_type", "target", "params"), EDITS_OF_EVERY_TYPE, ids=[e[0] for e in EDITS_OF_EVERY_TYPE])
-def test_every_type_saves_a_world_that_loads(queue: Site, local_worlds: Path, edit_type: str, target: str, params: dict[str, Any]) -> None:
+def test_every_type_saves_a_world_that_loads(queue: Site, local_root: Path, edit_type: str, target: str, params: dict[str, Any]) -> None:
     from arena_simulation_setup.tree.World import WorldIdentifier
 
     path = save(apply(queue, edit_type, target, params))
-    assert path.parent == local_worlds
+    assert path.parent == local_root / "worlds"
     WorldIdentifier(path.name).resolve_sync().load()
     record = yaml.safe_load((path / EDITS).read_text())
     assert record["edits"] == [{"id": path.name.split("__")[1], "parent": "hospital_1", "type": edit_type, "target": target, "params": params}]
@@ -150,23 +142,54 @@ def test_edits_chain_from_a_saved_world(queue: Site) -> None:
     assert _rooms(load(path / GRAPH), "obj:fountain") == ["room:sub_hallway"]
 
 
-def test_cli_prints_the_edit_and_writes_with_write(local_worlds: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_prints_the_edit_and_writes_with_write(local_root: Path, capsys: pytest.CaptureFixture[str]) -> None:
     argv = ["edit", "hospital_1", "function", "obj:fountain", "--scenario", "queue", "--worlds", str(WORLDS), "-p", "capacity=2", "-p", "satisfies.thirst=60"]
     assert main(argv) == 0
     printed = yaml.safe_load(capsys.readouterr().out)
     assert printed["edits"][0]["params"] == {"capacity": 2, "satisfies": {"thirst": 60}}
-    assert not local_worlds.exists()
+    assert not (local_root / "worlds").exists()
     assert main([*argv, "--write"]) == 0
-    assert (local_worlds / printed["world"] / EDITS).is_file()
+    assert (local_root / "worlds" / printed["world"] / EDITS).is_file()
 
 
 def test_function_clear_leaves_an_inert_object(queue: Site) -> None:
-    demand = ("serves", "satisfies", "dwells", "has_formation")
     inserted = apply(queue, *EDITS_OF_EVERY_TYPE[1])
     cleared = apply(inserted, "function", "obj:fountain_2", {"clear": True})
-    assert not [f for f in cleared.graph.facts if f.subject == "obj:fountain_2" and f.verb in demand]
+    assert not [f for f in cleared.graph.facts if f.subject == "obj:fountain_2" and f.verb in DEMAND_VERBS]
     objects = yaml.safe_load((save(cleared) / "world.yaml").read_text())["levels"][0]["objects"]
     assert not next(o for o in objects if o["name"] == "fountain_2").get("humansim")
     scenario = apply(queue, "function", "obj:fountain", {"clear": True, "type": "fountain", "capacity": 2})
     assert _facts(scenario.graph, "obj:fountain", "serves") == [("service:fountain", {"capacity": 2})]
     assert not _facts(scenario.graph, "obj:fountain", "has_formation")
+
+
+def _world_object(site: Site, name: str) -> Obstacle:
+    return next(o for level in site.world.levels.values() for o in level.objects if o.name == name)
+
+
+def test_move_keeps_an_objects_height_and_insert_takes_one(queue: Site) -> None:
+    tray = _world_object(queue, "or_surgical_tray_1").pose
+    assert tray.position.z > 0.5  # it stands on a table
+    moved = apply(queue, "move", "obj:or_surgical_tray_1", {"x": tray.position.x + 0.1, "yaw": 0.5})
+    after = _world_object(open_site(save(moved)), "or_surgical_tray_1").pose
+    assert after.position.z == pytest.approx(tray.position.z) and after.orientation.to_yaw() == pytest.approx(0.5)
+    model = str(queue.graph.entities["obj:or_surgical_tray_1"].props["model"])
+    inserted = apply(queue, "insert", "obj:tray_2", {"model": model, "x": tray.position.x, "y": tray.position.y + 0.3, "z": 0.9})
+    assert _world_object(inserted, "tray_2").pose.position.z == 0.9
+
+
+def test_an_inserted_objects_dwell_names_the_insert_edit(queue: Site) -> None:
+    inserted = apply(queue, *EDITS_OF_EVERY_TYPE[1])
+    ((_, params),) = _facts(inserted.graph, "obj:fountain_2", "dwells")
+    assert params["from"] == f"edit:{inserted.edits[-1].id}"
+
+
+def test_a_false_flag_names_the_same_edit_as_leaving_it_out(queue: Site) -> None:
+    assert apply(queue, "function", "obj:fountain", {"capacity": 2, "clear": False}).name == apply(queue, "function", "obj:fountain", {"capacity": 2}).name
+    assert apply(queue, "access", "door:or_door", {"locked": True, "remove": False}).name == apply(queue, "access", "door:or_door", {"locked": True}).name
+
+
+def test_schedule_access_keeps_remove_out_of_its_preset(queue: Site) -> None:
+    timed = apply(queue, "access", "schedule:fire_alarm", {"remove": False, "windows": [{"start": 60, "end": 90}]})
+    (params,) = presets(next(s for s in timed.world.schedules if s.name == "fire_alarm").semantics, "schedule")
+    assert "remove" not in params and params["windows"] == [{"start": 60, "end": 90}]
