@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import math
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import yaml
 
 try:
     import shapely
@@ -28,9 +31,12 @@ SAFE = 0.3
 
 
 CHARGER_DOCK = [[0.5, -0.5], [1.5, -0.5], [1.5, 0.5], [0.5, 0.5]]
+#: A waiting bay's slot, centred on the floor marking's origin.
+BAY_DOCK = [[-0.6, -0.5], [0.6, -0.5], [0.6, 0.5], [-0.6, 0.5]]
+BAY_YAW = math.pi / 2
 
 
-def _manager(blocked: tuple[float, float, float, float] | None, seed: int = 0) -> SimpleNamespace:
+def _manager(blocked: tuple[float, float, float, float] | None, seed: int = 0, objects: tuple[Obstacle, ...] = ()) -> SimpleNamespace:
     grid = np.full((100, 100), WorldOccupancy.EMPTY, dtype=np.uint8)
     world_manager = WorldManager.__new__(WorldManager)
     world_manager._map = WorldMap(occupancy=WorldLayers(walls=WorldOccupancy(grid)), origin=Position(0.0, 0.0), resolution=RES, time=Time())
@@ -41,7 +47,7 @@ def _manager(blocked: tuple[float, float, float, float] | None, seed: int = 0) -
     world_manager._zone_masks = {}
     world_manager._stair_masks = {}
     charger = Obstacle(name=f"{WORLD_ENTITY_PREFIX}charger_1", model="charger", pose=Pose(position=Position(4.0, 2.0), orientation=Orientation.from_yaw(math.pi)), dock=CHARGER_DOCK)
-    world_manager._world = World(levels={"0": Level(id="0", zones=[Zone(name="room", polygon=ROOM)], objects=[charger])})
+    world_manager._world = World(levels={"0": Level(id="0", zones=[Zone(name="room", polygon=ROOM)], objects=[charger, *objects])})
     rng = EpisodeRng()
     rng.reseed(seed)
     node = SimpleNamespace(_world_manager=world_manager, conf=SimpleNamespace(General=SimpleNamespace(RNG=rng)))
@@ -77,6 +83,19 @@ def test_docked_object_target_under_the_runtime_prefix_lands_in_its_dock_facing_
         assert math.dist((position.x, position.y), (3.0, 2.0)) <= 0.25 + RES
         assert _blocked_distance(position, blocked) >= SAFE - RES
         assert phase.pose.orientation.to_yaw() == pytest.approx(math.atan2(2.0 - position.y, 4.0 - position.x))
+
+
+@pytest.mark.parametrize(("model", "face", "front"), [("waiting_bay", "+x", 0.0), ("side_bay", "-y", -math.pi / 2)])
+def test_docked_object_target_over_the_objects_origin_faces_its_front(model: str, face: str, front: float) -> None:
+    bundle = Path(os.environ["ARENA_ASSETS_DIR_LOCAL"]) / "Common" / "Object" / model
+    bundle.mkdir(parents=True, exist_ok=True)
+    (bundle / "annotation.yaml").write_text(yaml.safe_dump({"name": model, "face": face}))
+    bay = Obstacle(name=f"{WORLD_ENTITY_PREFIX}bay_1", model=f"Common/Object/{model}", pose=Pose(position=Position(2.0, 4.0), orientation=Orientation.from_yaw(BAY_YAW)), dock=BAY_DOCK)
+    for seed in range(5):
+        phase = RobotManager._resolve_target(_manager(None, seed, (bay,)), GoToPhase(target="bay_1"))
+        position = phase.pose.position
+        assert math.dist((position.x, position.y), (2.0, 4.0)) <= 0.25 + RES
+        assert math.remainder(phase.pose.orientation.to_yaw() - BAY_YAW - front, math.tau) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_docked_object_target_without_a_free_cell_near_its_middle_names_it() -> None:

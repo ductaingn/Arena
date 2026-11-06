@@ -1067,13 +1067,31 @@ in front of a charger or the door side of a parcel locker. Its name then works
 as a goto target like a zone: the robot is sent to a free cell with its spawn
 clearance near the dock's deepest point (within half the dock's inner radius,
 so the planner's goal tolerance cannot stop it outside), facing the object,
-and the phase is met once `robot in <object>` holds, an atom `until:` and
-`conditions:` can use too. The dock moves and turns with the object's `pose`.
+or its annotated front (`face`, else behind its yaw) where the dock covers the
+object's own origin, as a waiting bay's slot does, and the phase is met once
+`robot in <object>` holds, an atom `until:` and `conditions:` can use too. The
+dock moves and turns with the object's `pose`.
 Size it so its middle lies at least the robot's radius plus
 `task.episode.spawn.robot_clearance` off the object's footprint, and its
 inner radius is at least twice the planner's goal tolerance (1.2 x 1.0 m
 for a jackal under nav2). A scenario object with `dock:` is refused: goto
 targets resolve on the world's levels.
+
+A docked object with `charge_power_w` is a charger. Once a robot has stood
+still in its dock for a second (within the judge's park drift and turn,
+`PARK_DRIFT_M` and `PARK_TURN_RAD` in
+[`shared/judge.py`](src/arena_simulation_setup/shared/judge.py)), the runtime
+sends that power to the robot's power publisher
+(`<robot_ns>/power_publisher/charge_power`, latched), which charges the
+battery with it less the robot's own draw, up to `battery_capacity_wh`. A
+charger charges one robot at a time, the first one parked in its dock, until
+it moves or leaves; another robot in the same dock gets 0 W meanwhile, and so
+does a robot driving through. The energy the robot consumes, and so its cost
+of transport, counts the same with or without charging. Each robot starts
+every episode with a charge drawn per episode seed and robot name between
+`task.episode.battery.soc.min` and `task.episode.battery.soc.max` (40 to
+100 %; each within 0 to 100, min at most max), sent to
+`<robot_ns>/power_publisher/soc_percent`.
 
 ```yaml
 objects:
@@ -1081,6 +1099,7 @@ objects:
   model: equipment_robot_charger_a01
   pose: [12.0, 3.0, 3.1416]
   dock: [[0.4, -0.5], [1.4, -0.5], [1.4, 0.5], [0.4, 0.5]]   # 1 m square off the +x face
+  charge_power_w: 1620.0   # a 270 Wh jackal battery in about 10 min
 ```
 
 For HumanSim (arena_humansim) pedestrians include an `agent:` block. The

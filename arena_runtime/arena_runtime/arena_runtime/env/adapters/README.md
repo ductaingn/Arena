@@ -119,6 +119,25 @@ are exempt, and so is any point more than 1 m from the mesh.
    fires before `get_adapter` runs.
 5. Set `mobile: <kind>` (or `adapters: {mobile: <kind>}`) in the scenario robot entry or `robot_setup.yaml`.
 
+## Lift and gripper adapters
+
+`lift` and `gripper` adapters accept no task phase (`accepts=()`, no client): they own a ROS command
+surface instead. `robot.lift` / `robot.gripper` (default `direct`) select the kind for every robot
+advertising the cap, `adapters: {lift: none}` in a robot setup file overrides one robot.
+
+| Cap | Kind | Command topic under `<robot_ns>` | Type | Effect |
+|---|---|---|---|---|
+| `lift` | `direct` | `lift/<instance>/command` | `std_msgs/Float64` | height clamped to the instance's `limits: [lower, upper]` (unclamped without it), published on `<controller>/commands` (`Float64MultiArray`) |
+| `gripper` | `direct` | `gripper/<instance>/command` | `control_msgs/GripperCommand` | position clamped between `positions.open` and `positions.close`, `max_effort` capped at the instance's (0 = the instance's), sent as a `GripperCommand` goal to `<controller>/gripper_cmd` |
+| both | `none` | - | - | binds nothing |
+
+`direct` echoes the clamped command on `lift/<instance>/applied` and `gripper/<instance>/applied`
+(same types, transient-local). The gripper goal is fire and forget: the adapter does not await the
+result. `<instance>` is the instance key of `caps/lift.yaml` / `caps/gripper.yaml`, or the mount name
+for component caps. The `robots_lift` and `robots_gripper` MCP tools publish these commands and
+return the echo. Topic names and clamping live in
+[`arena_robots/actuators.py`](../../../../../arena_robots/arena_robots/arena_robots/actuators.py).
+
 ## Declaring visualization displays
 
 Adapters surface displays to any visualizer (rviz, rerun, ...) through
@@ -170,7 +189,7 @@ tick (sim-time gated):
 | Topic | Type | Content |
 |---|---|---|
 | `<robot_ns>/collision_monitor_state` | `nav2_msgs/CollisionMonitorState` | Scalar `polygon_name` + `action_type` for the most severe active polygon. Drop-in for the same observation nav2's `collision_monitor` emits, training consumers don't care which produced it. |
-| `<robot_ns>/collision_events` | `arena_robots_msgs/CollisionEvents` | Footprint contacts, the single definition of a collision: at most one `CollisionEvent` for the top-ranked grid cell under the footprint plus one per pedestrian disc it intersects. `kind` is one of the `KIND_*` constants; `obstacle_id` is the static name, `<wall>` for an authored wall, `<map>` for map occupancy with nothing authored behind it, or the pedestrian name. `distance` is reserved for future signed-clearance reporting; v1 is intersect-only and always emits `0.0`. Under `fail_on_collision` a non-empty message ends the episode with outcome `collision`, so that outcome implies a non-empty message in the bag. Without a `footprint` the topic is not published. |
+| `<robot_ns>/collision_events` | `arena_robots_msgs/CollisionEvents` | Footprint contacts, the single definition of a collision: at most one `CollisionEvent` for the top-ranked grid cell under the footprint plus one per pedestrian disc it intersects, each disc the pedestrian's own `radius` on `arena_peds`, `humans.PED_RADIUS` (0.3 m) where that is 0 (unknown), the same disc flatsim and the mechanisms use. `kind` is one of the `KIND_*` constants; `obstacle_id` is the static name, `<wall>` for an authored wall, `<map>` for map occupancy with nothing authored behind it, or the pedestrian name. `distance` is reserved for future signed-clearance reporting; v1 is intersect-only and always emits `0.0`. Under `fail_on_collision` a non-empty message ends the episode with outcome `collision`, so that outcome implies a non-empty message in the bag. Without a `footprint` the topic is not published. |
 
 Static geometry is one window read on `EnvironmentManager.collision_grid`
 (see [env/README.md](../README.md)), kept in sync by the

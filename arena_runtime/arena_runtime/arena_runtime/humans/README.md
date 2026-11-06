@@ -51,7 +51,7 @@ specialized teleport semantics (e.g. resetting an internal agent list).
 
 | Method | Signature |
 | --- | --- |
-| `pedestrian_discs()` | `() -> Iterable[tuple[str, tuple[float, float], float]]` (sync, reads `_ped_positions_xy`, radius is `PED_RADIUS`) |
+| `pedestrian_discs()` | `() -> Iterable[tuple[str, tuple[float, float], float]]` (sync, the latest `arena_peds` positions, each disc the pedestrian's own `radius`, `PED_RADIUS` where that is 0) |
 | `pedestrian_clips()` | `() -> Mapping[str, frozenset[str]]` (sync, the gesture clips each ped is playing, from the same `arena_peds` message) |
 | `pedestrian_teleport(destinations)` | `(Mapping[str, tuple[float, float]]) -> bool` (async, dispatches via `relay_pedestrian_update`, `ArenaHumanSimulator` teleports in the engine instead, then sends each moved ped its next itinerary leg and the `teleported` stimulus) |
 | `elevator_doors_changed(doors)` | `(Mapping[str, bool]) -> None` (async) |
@@ -576,6 +576,27 @@ slide across the map.
 `publish_arena_peds` sets each pedestrian's z to the walking surface of the stair half it stands on
 (`stair_height`): rising from 0 at the mouth to half the stair's rise at the seam on a bottom half, sinking
 to minus half the rise on a top half, 0 off every stair.
+
+### Seeding
+
+The same episode seed gives the same pedestrians, whatever the env index, the spawn order or the launch, as the
+engine itself guarantees (HumanSim keys every agent's streams on (seed, id) or (seed, source, release index)). The
+adapter draws only from `EpisodeRng` streams keyed on stable names ([`rng_keys.py`](arena_humansim/rng_keys.py)),
+never on the env prefix, which the runtime counts up on every spawn, nor on an engine agent id that depends on release
+order:
+
+| Draw | Key |
+|---|---|
+| a scenario pedestrian's agent type sample (speed, radius, perception, local planner, handedness) | `humansim, walker, <name in its env>` |
+| an object's seat poses from its sit slots | `humansim, seats, <name in its env>` |
+| a source-released agent's human model | `humansim, flow-model, source, <source_name>, <source_seq>` |
+| the engine's own seed, handed over before each crowd | `humansim, engine` |
+
+`<name in its env>` is the sim path without the env prefix (`Realizer.unprefix`: `env_1/flow_3` is `flow_3`, a
+level suffix stays). Each stream depends only on the seed and its key, so adding or removing one person changes no
+other person's draws. The episode seed itself comes from the episode request (`RunEpisode`, `reset_episode`) when it
+names one, else from `run_seed|world|episode_id` (see [env/README.md](../env/README.md)): runs that must pair, such as
+a world and its edit, pass the same explicit seed.
 
 ## HuNavSim default agent template
 

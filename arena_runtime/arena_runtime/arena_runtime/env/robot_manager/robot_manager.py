@@ -18,14 +18,17 @@ import rclpy
 import rclpy.logging
 import rclpy.node
 import rclpy.publisher
+import rclpy.qos
 import rclpy.time
 import rclpy.timer
 import shapely
+import std_msgs.msg
 import tf2_ros
 from arena_rclpy_mixins.Async import LaunchHandle
 from arena_rclpy_mixins.shared import FrameNamespace, Namespace
 from arena_robots.Robot import RobotView
 from arena_simulation_setup.shared.conditions import render_until
+from arena_simulation_setup.utils.face import front_angle
 from shapely.ops import polylabel
 
 from arena_runtime._node import NodeInterface
@@ -40,16 +43,17 @@ if typing.TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
     from arena_simulation_setup.shared.conditions import EpisodeCondition
+    from arena_simulation_setup.shared.entities import Obstacle
     from arena_simulation_setup.shared.judge import Sample, Zones
 
     from arena_runtime.env.adapters import Adapter, ResetContext
+    from arena_runtime.env.constants.rng import EpisodeRng
     from arena_runtime.env.request import ElevatorRidePhase, GoToPhase, TaskKind, TaskPhase, TaskRequest
 
 
 _NAV2_QUIET_NODES = (
     'behavior_server',
     'bt_navigator',
-    'collision_monitor',
     'controller_server',
     'lifecycle_manager_navigation',
     'nav2_container',
@@ -61,6 +65,8 @@ _NAV2_QUIET_NODES = (
 _NAV2_QUIET_RULES = '+[' + ', '.join(f'**/{n}:error' for n in _NAV2_QUIET_NODES) + ']'
 
 _MOVEIT_QUIET_RULES = '+[**/moveit/**:error]'
+
+_COLLISION_MONITOR_RULES = '+[**/collision_monitor:info]'
 
 _CONTROLLER_POLL = 0.2
 _CM_CALL_TIMEOUT = 10.0
@@ -75,6 +81,8 @@ _TELEPORT_ATTEMPTS = 3
 _TELEPORT_TICK_CAP = 5
 _TELEPORT_TICK_WAIT = 0.5
 
+_LATCHED = rclpy.qos.QoSProfile(depth=1, durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL)
+
 
 def log_level_actions(spec: str) -> list[NodeLogLevelExtension.SetGlobalLogLevelAction]:
     """Rule set for a robot launch: ``spec`` with nav2 and moveit quieted wherever it names no node."""
@@ -82,6 +90,7 @@ def log_level_actions(spec: str) -> list[NodeLogLevelExtension.SetGlobalLogLevel
         NodeLogLevelExtension.SetGlobalLogLevelAction(spec),
         NodeLogLevelExtension.SetGlobalLogLevelAction(_NAV2_QUIET_RULES, fallback=True),
         NodeLogLevelExtension.SetGlobalLogLevelAction(_MOVEIT_QUIET_RULES, fallback=True),
+        NodeLogLevelExtension.SetGlobalLogLevelAction(_COLLISION_MONITOR_RULES, fallback=True),
     ]
 
 
@@ -95,6 +104,12 @@ def footprint_radius(config: RobotView) -> float:
     if mobile.footprint:
         return max(math.hypot(x, y) for x, y in mobile.footprint) + (mobile.footprint_padding or 0.0)
     raise ValueError(f"{mobile.path}: sets neither radius nor footprint")
+
+
+def _front_yaw(obstacle: Obstacle) -> float:
+    """Yaw of an object's annotated front (`face`), behind its yaw without one, the side HumanSim queues people at."""
+    front = front_angle((obstacle.model.resolve_sync().annotation or {}).get('face'))
+    return obstacle.pose.orientation.to_yaw() + (math.pi if front is None else front)
 
 
 class RobotManager(NodeInterface):
@@ -275,6 +290,7 @@ class RobotManager(NodeInterface):
         self._on_collision = None
         self._phase_failure = None
         self._cabin_to_clear = ""
+        self._charge_power_w = 0.0
 
     def bind_abort(self, fn: Callable[[str], None]) -> None:
         self._abort_episode = fn
@@ -310,6 +326,8 @@ class RobotManager(NodeInterface):
 
         self._stop_pub = self.node.create_publisher(geometry_msgs.msg.Twist, str(self.namespace("cmd_vel")), 1)
         self._task_pose_pub = self.node.create_publisher(geometry_msgs.msg.PoseStamped, str(self.namespace("task_pose")), 10)
+        self._charge_pub = self.node.create_publisher(std_msgs.msg.Float64, str(self.namespace("power_publisher", "charge_power")), _LATCHED)
+        self._soc_pub = self.node.create_publisher(std_msgs.msg.Float64, str(self.namespace("power_publisher", "soc_percent")), _LATCHED)
         self._goal_pub = self.node.create_publisher(
             geometry_msgs.msg.PoseStamped,
             _gen_goal_topic,
@@ -423,6 +441,22 @@ class RobotManager(NodeInterface):
         msg.header.stamp = self.node.sim_time.to_msg()
         msg.pose = pose.to_msg()
         self._task_pose_pub.publish(msg)
+
+    def publish_charge_power(self, power: float) -> None:
+        """Send the power in W the robot charges with to its power publisher, on change."""
+        if power != self._charge_power_w:
+            self._charge_power_w = power
+            self._charge_pub.publish(std_msgs.msg.Float64(data=power))
+
+    def initial_soc(self, rng: EpisodeRng, low: float, high: float) -> float:
+        """Battery charge in percent the robot starts an episode with, from the episode seed and its bare name, so no env index changes it."""
+        if low > high:
+            raise ValueError(f"task.episode.battery.soc.min ({low}) is above task.episode.battery.soc.max ({high})")
+        return float(rng.stream("robots", "soc", self.name).uniform(low, high))
+
+    def publish_soc(self, soc: float) -> None:
+        """Set the battery charge in percent on the robot's power publisher."""
+        self._soc_pub.publish(std_msgs.msg.Float64(data=soc))
 
     def set_episode_conditions(self, conditions: Sequence[EpisodeCondition]) -> None:
         self._runner.set_episode_conditions(conditions)
@@ -579,16 +613,17 @@ class RobotManager(NodeInterface):
         return phase
 
     def _resolve_target(self, phase: GoToPhase) -> GoToPhase:
-        """Give a named zone, door, elevator or docked object target its dispatch pose unless it carries one, a ped target keeps following the ped. A docked object's pose lies within half the dock's inner radius of its deepest point, facing the object."""
+        """Give a named zone, door, elevator or docked object target its dispatch pose unless it carries one, a ped target keeps following the ped. A docked object's pose lies within half the dock's inner radius of its deepest point, facing the object, or its front where the dock covers the object's origin."""
         if phase.target is None or phase.pose is not None:
             return phase
         world = authored_statics(self.node._world_manager.world_compacted())
         corners = world.lookup_zone_polygon(phase.target)
         if corners is None:
             return phase
+        outline = shapely.Polygon([(corner.x, corner.y) for corner in corners])
         docked = next((entity for entity in world.objects if entity.name == phase.target and entity.dock is not None), None)
         if docked is not None or any(zone.name == phase.target for zone in world.zones):
-            area = shapely.Polygon([(corner.x, corner.y) for corner in corners])
+            area = outline
             if docked is not None:
                 # away from the dock's edges, so a planner's goal tolerance cannot stop the robot outside it
                 deepest = polylabel(area)
@@ -601,7 +636,12 @@ class RobotManager(NodeInterface):
             position = world.point_resolver(self.node.conf.General.RNG.stream("robots", "target", self.name)).resolve(phase.target)
         if docked is None:
             return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.identity()))
-        facing = math.atan2(docked.pose.position.y - position.y, docked.pose.position.x - position.x)
+        origin = docked.pose.position
+        if outline.covers(shapely.Point(origin.x, origin.y)):
+            # the robot may stand on the origin itself, where no direction faces the object
+            facing = _front_yaw(docked)
+        else:
+            facing = math.atan2(origin.y - position.y, origin.x - position.x)
         return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.from_yaw(facing)))
 
     async def submit_task(self, request: TaskRequest, start: Pose | None = None, pedestrians: Iterable[str] = ()) -> None:

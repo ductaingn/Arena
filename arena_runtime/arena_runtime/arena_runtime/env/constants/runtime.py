@@ -24,6 +24,8 @@ EPISODE_PARAMS: dict[str, str] = {
     'task.episode.goto_pose.timeout.no_progress': 'Fail a goto_pose episode after this many sim seconds without goal progress (-1 = off).',
     'task.episode.goto_pose.hold_time': 'Sim seconds a robot must park at a goto_pose goal before the phase counts as met (0 = arrival suffices).',
     'task.episode.goto_pose.signal': 'Signal the robot must send to end a goto_pose phase, such as arrived (empty = Arena judges arrival).',
+    'task.episode.battery.soc.min': 'Lowest battery charge in percent (0 to 100) a robot starts an episode with, drawn per episode seed and robot name.',
+    'task.episode.battery.soc.max': 'Highest battery charge in percent (0 to 100, at least soc.min) a robot starts an episode with, drawn per episode seed and robot name.',
 }
 
 RUN_EPISODE_BUSY = 'busy'
@@ -66,6 +68,11 @@ def Configuration(server: ROSParamServer) -> type:
         if not isinstance(v, (int, float)):
             raise TypeError(f'expected a number, got {v!r}')
         return v if v >= 0 else float('inf')
+
+    def _percent(v: object) -> float:
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0.0 <= v <= 100.0:
+            raise ValueError(f'expected a percentage between 0 and 100, got {v!r}')
+        return float(v)
 
     class Config:
         """
@@ -134,6 +141,10 @@ def Configuration(server: ROSParamServer) -> type:
 
             GOAL_SIGNAL = server.ROSParam[str]('task.episode.goto_pose.signal', '')
 
+            BATTERY_SOC_MIN = server.ROSParam[float]('task.episode.battery.soc.min', 40.0, parse=_percent)
+
+            BATTERY_SOC_MAX = server.ROSParam[float]('task.episode.battery.soc.max', 100.0, parse=_percent)
+
             SPAWN_ROBOT_SAFE_DIST = server.ROSParam[float](
                 'task.episode.spawn.robot_clearance',
                 0.25,
@@ -165,6 +176,16 @@ def Configuration(server: ROSParamServer) -> type:
             ARM_ADAPTER = server.ROSParam[str](
                 'robot.arm_adapter',
                 'moveit',
+            )
+
+            LIFT_ADAPTER = server.ROSParam[str](
+                'robot.lift_adapter',
+                'direct',
+            )
+
+            GRIPPER_ADAPTER = server.ROSParam[str](
+                'robot.gripper_adapter',
+                'direct',
             )
 
             HEARING = server.ROSParam[str](

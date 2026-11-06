@@ -17,8 +17,10 @@ import arena_robots.Robot
 import arena_robots.Sensor
 import attrs
 import launch
+import launch.event_handlers
 import launch_ros.actions
 import rclpy.qos
+from arena_bringup.constants import SimSimulator
 from arena_people_msgs.msg import Pedestrians
 from arena_rclpy_mixins import ArenaMixinNode
 from arena_rclpy_mixins.Async import ClientWrapper, LaunchHandle
@@ -30,10 +32,12 @@ from flatsim_msgs.msg import Box, Disc, Discs, EntityPose, EntityPoses, Fan, Out
 from flatsim_msgs.msg import Floor as FloorMsg
 from flatsim_msgs.srv import AddFloors, AddOutlines, ControlWorld, DeleteEntities, DeletePrefix, DeleteRobot, Republish, SetRobotPose, SpawnBoxes, SpawnRobot
 
-from arena_runtime.humans import PED_RADIUS
+from arena_runtime.humans import ped_radius
 from arena_runtime.shared import DynamicObstacle, Floor, ModelType, Obstacle, Pose, Robot, Wall
 from arena_runtime.sim import BaseSim, SimKwargs, SimLifecycle, SimUnavailable
+from arena_runtime.sim._control import effective_control_yaml, robot_controllers
 from arena_runtime.sim._interface import robot_footprint_radius
+from arena_runtime.sim._urdf import mock_arm_hardware
 
 from .planar import drive_model
 
@@ -142,15 +146,21 @@ def _outline(name: str, rings: Iterable[Sequence[Point]], extent: Extent) -> Out
     return Outline(name=name, rings=[Ring(x=[point[0] for point in ring], y=[point[1] for point in ring]) for ring in rings], z_min=extent[0], z_max=extent[1])
 
 
-def _disc(name: str, pose: Pose, velocity: Point = (0.0, 0.0)) -> Disc:
+def _disc(name: str, pose: Pose, radius: float, velocity: Point = (0.0, 0.0)) -> Disc:
     z_min, z_max = _ped_extent(pose.position.z)
-    return Disc(name=name, radius=PED_RADIUS, x=pose.position.x, y=pose.position.y, vx=velocity[0], vy=velocity[1], z_min=z_min, z_max=z_max)
+    return Disc(name=name, radius=ped_radius(radius), x=pose.position.x, y=pose.position.y, vx=velocity[0], vy=velocity[1], z_min=z_min, z_max=z_max)
 
 
 def _answer[T](response: T | None) -> T:
     if response is None:
         raise SimUnavailable('flatsim: the server did not answer')
     return response
+
+
+def mock_controllers(names: list[str], base: str) -> list[str]:
+    """The controllers flatsim runs on mock hardware: all but the base controller, none when only the joint_state_broadcaster would remain."""
+    rest = [name for name in names if name != base]
+    return rest if any(name != 'joint_state_broadcaster' for name in rest) else []
 
 
 class FlatsimSimulator(BaseSim):
@@ -175,7 +185,7 @@ class FlatsimSimulator(BaseSim):
         self._poses = self.node.create_publisher(EntityPoses, f'{SERVER}/poses', reliable(_TOPIC_QUEUE))
 
         self._robots: dict[str, LaunchHandle] = {}
-        self._pedestrians: set[str] = set()
+        self._pedestrians: dict[str, float] = {}  # disc name -> its last known radius, 0 = unknown
         self._wall_counter = itertools.count()
         self._wall_names: list[str] = []
         self._floor_names: list[str] = []
@@ -242,8 +252,17 @@ class FlatsimSimulator(BaseSim):
             if str(sensor.type) in _SENSOR_TYPES
         ]
 
+    def robot_controllers(self, robot: Robot) -> list[str]:
+        """The arm, torso and gripper controllers of a ros2_control robot, none for a robot with only a base controller, which stays with the server."""
+        robot_config = arena_robots.Robot.RobotIdentifier(robot.model.name).resolve_sync()
+        control_spec = robot_config.model_params.control
+        if control_spec is None:
+            return []
+        base = control_spec.cmd_vel_topic.split('/')[0]
+        return mock_controllers(robot_controllers(robot_config, robot.resolved_assembly), base)
+
     async def _launch_robot_stack(self, robot: Robot, description: str) -> LaunchHandle:
-        """Launch robot_state_publisher in the robot namespace."""
+        """Launch robot_state_publisher in the robot namespace, and a mock-hardware controller_manager for a ros2_control robot."""
         ld = launch.LaunchDescription()
         ld.add_action(launch_ros.actions.PushRosNamespace(namespace=str(self.node.service_namespace(robot.name))))
         ld.add_action(
@@ -259,6 +278,35 @@ class FlatsimSimulator(BaseSim):
                 ],
             )
         )
+        robot_config = arena_robots.Robot.RobotIdentifier(robot.model.name).resolve_sync()
+        control_spec = robot_config.model_params.control
+        if control_spec is not None and control_spec.is_ros2_control and control_spec.config is not None and self.robot_controllers(robot):
+            control_prefix = robot_config.assembly.prefix if robot_config.assembly is not None else 'robot_'
+            rendered_yaml = effective_control_yaml(robot.resolved_assembly, control_spec.config, robot.sim_path, robot.frame.tf(), sim=SimSimulator.FLATSIM, prefix=control_prefix)
+            cm_node = launch_ros.actions.Node(
+                package='controller_manager',
+                executable='ros2_control_node',
+                name='controller_manager',
+                output='screen',
+                parameters=[{'use_sim_time': True}, rendered_yaml],
+            )
+            ld.add_action(cm_node)
+            ld.add_action(
+                launch.actions.RegisterEventHandler(
+                    launch.event_handlers.OnProcessStart(
+                        target_action=cm_node,
+                        on_start=[
+                            launch_ros.actions.Node(
+                                package='arena_runtime',
+                                executable='urdf_publisher',
+                                name='urdf_publisher',
+                                output='screen',
+                                parameters=[{'robot_description': description}],
+                            )
+                        ],
+                    )
+                )
+            )
         return await self.node.do_launch_tracked(ld)
 
     async def _release(self, sim_path: str) -> bool:
@@ -284,7 +332,7 @@ class FlatsimSimulator(BaseSim):
                 raise NotImplementedError(f"robot model of type {model.type} can't be spawned by {self.__class__.__name__}")
             assert model.path is not None, f'URDF model {model.name} must have a valid file path'
             with open(model.path) as f:
-                description = f.read()
+                description = mock_arm_hardware(f.read())
 
             robot_params = robot_config.model_params
             mobile = robot_params.caps.mobile
@@ -375,26 +423,41 @@ class FlatsimSimulator(BaseSim):
         return await self._remove([self._name(obstacle.sim_path) for obstacle in obstacles])
 
     async def pedestrian_spawn(self, pedestrians: Sequence[DynamicObstacle]) -> Sequence[bool]:
-        discs = [_disc(self._name(pedestrian.sim_path), pedestrian.pose) for pedestrian in pedestrians]
-        self._pedestrians.update(disc.name for disc in discs)
-        self._discs.publish(Discs(discs=discs))
+        names = [self._name(pedestrian.sim_path) for pedestrian in pedestrians]
+        for name in names:
+            self._pedestrians.setdefault(name, 0.0)
+        self._discs.publish(Discs(discs=[_disc(name, pedestrian.pose, self._pedestrians[name]) for name, pedestrian in zip(names, pedestrians, strict=True)]))
         return tuple(True for _ in pedestrians)
 
     async def pedestrian_move(self, pedestrians: Sequence[DynamicObstacle]) -> Sequence[bool]:
-        known = [self._name(pedestrian.sim_path) in self._pedestrians for pedestrian in pedestrians]
-        self._discs.publish(Discs(discs=[_disc(self._name(pedestrian.sim_path), pedestrian.pose) for pedestrian, ok in zip(pedestrians, known, strict=True) if ok]))
+        names = [self._name(pedestrian.sim_path) for pedestrian in pedestrians]
+        known = [name in self._pedestrians for name in names]
+        self._discs.publish(Discs(discs=[_disc(name, pedestrian.pose, self._pedestrians[name]) for name, pedestrian, ok in zip(names, pedestrians, known, strict=True) if ok]))
         return tuple(known)
 
     async def pedestrian_delete(self, pedestrians: Sequence[DynamicObstacle]) -> Sequence[bool]:
         names = [self._name(pedestrian.sim_path) for pedestrian in pedestrians]
         known = tuple(name in self._pedestrians for name in names)
-        self._pedestrians.difference_update(names)
+        for name in names:
+            self._pedestrians.pop(name, None)
         self._discs.publish(Discs(removed=names))
         return known
 
     async def pedestrian_update(self, pedestrians: Pedestrians) -> Sequence[bool]:
-        discs = [_disc(self._name(pedestrian.name), Pose.from_msg(pedestrian.pose), (pedestrian.twist.linear.x, pedestrian.twist.linear.y)) for pedestrian in pedestrians.pedestrians]
-        self._pedestrians.update(disc.name for disc in discs)
+        discs: list[Disc] = []
+        resized: list[str] = []
+        for pedestrian in pedestrians.pedestrians:
+            name = self._name(pedestrian.name)
+            known = self._pedestrians.get(name)
+            # a message without a radius (a teleport, a possessed ped) keeps the disc's size
+            radius = pedestrian.radius if pedestrian.radius > 0.0 else known or 0.0
+            if known is not None and ped_radius(radius) != ped_radius(known):
+                resized.append(name)
+            self._pedestrians[name] = radius
+            discs.append(_disc(name, Pose.from_msg(pedestrian.pose), radius, (pedestrian.twist.linear.x, pedestrian.twist.linear.y)))
+        if resized:
+            # the server sizes a disc only when it first sees it
+            self._discs.publish(Discs(removed=resized))
         self._discs.publish(Discs(discs=discs))
         return tuple(True for _ in pedestrians.pedestrians)
 
