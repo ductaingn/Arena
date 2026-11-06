@@ -10,6 +10,7 @@ from arena_simulation_setup.generative.flowedit.build import presets
 from arena_simulation_setup.generative.flowedit.cli import main
 from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EDITS, GRAPH, Site, apply, open_site, save
 from arena_simulation_setup.kg import Scene, Value, dumps, load
+from flowedit_docks import CHARGER, DOCKED, DOCKED_IDS, FACING_NORTH, LOCKER
 
 if TYPE_CHECKING:
     from arena_simulation_setup.shared.entities import Obstacle
@@ -271,19 +272,6 @@ def test_schedule_access_keeps_remove_out_of_its_preset(queue: Site) -> None:
     assert "remove" not in params and params["windows"] == [{"start": 60, "end": 90}]
 
 
-#: The INFRA elements against the south wall of the waiting area, their front (`face: +x`) turned into the room and their
-#: origin `back` m off the wall: the charger's and the bay's origin is their middle, the parcel locker's a back corner.
-#: The charger and the locker have a 1.2 x 1.0 m jackal dock in front; the waiting bay is a floor marking with no
-#: collider and no bounding box, one slot per object, its dock the slot around its origin.
-DOCKED: list[tuple[str, str, float, list[list[float]]]] = [
-    ("charger_1", "Common/Object/robot_charger", 0.26, [[0.25, -0.5], [1.45, -0.5], [1.45, 0.5], [0.25, 0.5]]),
-    ("locker_1", "Common/Object/parcel_locker", 0.06, [[0.55, 0.02], [1.75, 0.02], [1.75, 1.02], [0.55, 1.02]]),
-    ("bay_1", "Common/Object/waiting_bay", 0.65, [[-0.6, -0.5], [0.6, -0.5], [0.6, 0.5], [-0.6, 0.5]]),
-]
-DOCKED_IDS = [model.rsplit("/", 1)[-1] for _, model, _, _ in DOCKED]
-FACING_NORTH = 1.5708
-
-
 def _docked(model: str, back: float, dock: list[list[float]]) -> dict[str, Any]:
     return {"model": model, "x": 20.0, "y": back, "yaw": FACING_NORTH, "dock": dock}
 
@@ -313,7 +301,7 @@ def test_insert_writes_a_dock_that_makes_the_object_a_goto_target(queue: Site, n
 
 
 def test_insert_refuses_a_dock_of_fewer_than_three_points(queue: Site) -> None:
-    _, model, back, dock = DOCKED[0]
+    _, model, back, dock = CHARGER
     with pytest.raises(ValueError, match="at least 3 points"):
         apply(queue, "insert", "obj:charger_1", _docked(model, back, dock[:2]))
 
@@ -328,7 +316,7 @@ def test_a_moved_object_takes_its_dock_along_in_its_own_frame(queue: Site, name:
 
 
 def test_a_locker_moved_without_its_demand_keeps_its_dock(queue: Site) -> None:
-    name, model, back, dock = DOCKED[1]
+    name, model, back, dock = LOCKER
     inserted = apply(queue, "insert", f"obj:{name}", {**_docked(model, back, dock), "type": "parcel_locker", "capacity": 1, "dwell": 30.0})
     moved = apply(inserted, "move", f"obj:{name}", {"x": 22.0, "leave_demand": True})
     assert _dock_in_level(moved, name) == _posed(22.0, back, FACING_NORTH, dock)

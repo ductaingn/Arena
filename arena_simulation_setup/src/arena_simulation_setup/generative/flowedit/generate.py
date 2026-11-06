@@ -16,7 +16,7 @@ from arena_simulation_setup.kg.scene import kind_of
 from arena_simulation_setup.utils.geometry import Position
 
 from .build import presets, zones_at
-from .edit import EditType, LayoutOp, Site, apply
+from .edit import EditType, LayoutOp, Site, apply, world_object
 
 if TYPE_CHECKING:
     import shapely
@@ -492,7 +492,8 @@ def _clone_demand(site: Site, obj: str) -> dict[str, Any]:
 
 def _clone_dock(site: Site, obj: str) -> dict[str, Any]:
     """The `dock` param that gives a new object the dock of `obj`, none for an object without one in `world.yaml`."""
-    dock = next((o.dock for level in site.world.levels.values() for o in level.objects if f"obj:{o.name}" == obj), None)
+    found = world_object(site.world, obj.partition(":")[2])
+    dock = None if found is None else found[0].objects[found[1]].dock
     return {} if dock is None else {"dock": [[p.x, p.y] for p in dock]}
 
 

@@ -200,7 +200,8 @@ def _find(world: World, items: Callable[[Level], Sequence[Named]], name: str) ->
     return None
 
 
-def _world_object(world: World, name: str) -> tuple[Level, int] | None:
+def world_object(world: World, name: str) -> tuple[Level, int] | None:
+    """The level and index of the world object `name`, None when no level has it."""
     return _find(world, lambda level: level.objects, name)
 
 
@@ -283,7 +284,7 @@ def _leave_demand(site: Site, obj: str, level_id: str, pose: Mapping[str, Any]) 
             params["anchor_ref"] = name
         site.graph.remove_fact(fact.subject, fact.verb, fact.object, fact.params)
         site.graph.add_fact(node, fact.verb, fact.object, params, source=fact.source)
-    found = _world_object(site.world, old_name)
+    found = world_object(site.world, old_name)
     if found is not None:
         level, i = found
         level.objects[i] = attrs.evolve(level.objects[i], humansim={k: v for k, v in level.objects[i].humansim.items() if k == "seats"})
@@ -303,7 +304,7 @@ def _move(site: Site, edit: Edit) -> None:
         _leave_demand(site, edit.target, old_level_id, pose)
     site.graph.remove_fact(edit.target, "at", f"floor:{old_level_id}")
     site.graph.add_fact(edit.target, "at", f"floor:{level_id}", {"x": x, "y": y, "yaw": yaw})
-    found = _world_object(site.world, _name(edit.target, "obj"))
+    found = world_object(site.world, _name(edit.target, "obj"))
     if found is not None:
         level, i = found
         old = level.objects[i].pose
@@ -349,7 +350,7 @@ def _remove(site: Site, edit: Edit) -> None:
     if edit.target not in site.graph.entities:
         raise ValueError(f"{edit.target} is no object of the graph")
     site.graph.remove_entity(edit.target)
-    found = _world_object(site.world, name)
+    found = world_object(site.world, name)
     if found is not None:
         level, i = found
         del level.objects[i]
@@ -407,7 +408,7 @@ def _set_demand(site: Site, obj: str, params: Mapping[str, Any], origin: str) ->
     _check_params(params, FUNCTION_PARAMS)
     if obj not in site.graph.entities or kind_of(obj) != "obj":
         raise ValueError(f"{obj} is no object of the graph")
-    found = _world_object(site.world, _name(obj, "obj"))
+    found = world_object(site.world, _name(obj, "obj"))
     block = None
     if found is not None:
         level, i = found
