@@ -116,6 +116,15 @@ def test_a_partition_and_a_dry_run(split: tuple[Path, dict[str, Any]], worlds: P
     assert not (worlds / held / "scenarios" / printed["stages"][-1]["config"]["scenario"]["file"]).exists()
 
 
+def test_a_built_suite_has_one_stage_per_job_and_a_dry_build_writes_no_scenario(split: tuple[Path, dict[str, Any]], worlds: Path) -> None:
+    _, doc = split
+    lines: list[str] = []
+    suite = SU.build(doc, SP.crowd(doc), worlds=worlds, robot="mpo700", regenerate=False, dry_run=True, log=lines.append)
+    assert [(s["name"], s["robot"]) for s in suite["stages"]] == [(SU.stage_name(j.world, j.seed), "mpo700") for j in SP.jobs(doc)]
+    assert not any((worlds / s["map"] / "scenarios" / s["config"]["scenario"]["file"]).exists() for s in suite["stages"])
+    assert all(line.startswith("note: [") for line in lines)
+
+
 def test_a_suite_flowedit_did_not_write_is_kept(split: tuple[Path, dict[str, Any]], worlds: Path, tmp_path: Path) -> None:
     path, _ = split
     out = tmp_path / "theirs.yaml"
@@ -126,9 +135,8 @@ def test_a_suite_flowedit_did_not_write_is_kept(split: tuple[Path, dict[str, Any
 
 
 def test_a_suite_without_an_edit_s_base_stage_is_refused() -> None:
-    lone = SU.suite_doc([SU.stage("hospital_1__function_fountain__ab", 3, "x", 60.0)])
     with pytest.raises(ValueError, match="no stage hospital_1__s3"):
-        SU.pairs(lone)
+        SU.suite_doc([SU.stage("hospital_1__function_fountain__ab", 3, "x", 60.0)])
     with pytest.raises(ValueError, match="appear twice"):
         SU.suite_doc([SU.stage("hospital_1", 1, "x", 60.0)] * 2)
 

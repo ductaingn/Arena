@@ -13,16 +13,17 @@ import yaml
 from arena_simulation_setup.kg import dumps, write
 from arena_simulation_setup.tree.World.write import to_yaml
 
-from ..scenario.cli import _writable, world_root
+from ..scenario.cli import world_root
 from ..scenario.materialize import WouldOverwrite
 from . import settings as S
 from . import split as SP
+from . import suite as SU
 from .build import build
-from .edit import EDITS, GRAPH, EditType, Site, apply, dump_edits, open_site, save
+from .edit import GRAPH, EditType, apply, dump_edits, open_site, save
 from .generate import controls, dump_manifest, generate
 from .read import read, render
 from .read import write as write_scenario
-from .run import DURATION_S, RUNS, Edit, default_out, done, prepare, record
+from .run import DURATION_S, RUNS, Edit, base_site, check_writable, default_out, done, prepare, record
 
 MANIFESTS = "flowedit"
 
@@ -45,37 +46,13 @@ def _cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
-def _base(worlds: Path | None, site: Site) -> Site:
-    """The unedited world `site` was edited from, the people's source: under `worlds` when it is there, else wherever the name resolves."""
-    if not site.edits:
-        return site
-    try:
-        base_root = world_root(worlds, site.base)
-    except FileNotFoundError:
-        base_root = world_root(None, site.base)
-    return open_site(base_root, site.scenario, site.seed, [])
-
-
-def _check_writable(worlds: Path | None, world: str, root: Path) -> None:
-    """Refuse a world a scenario must not be written into."""
-    if not (root / EDITS).is_file():
-        # a shipped world is written in the source tree only
-        _writable(world_root(worlds, world, write=True))
-    elif worlds is None:
-        from arena_simulation_setup.tree.World import WorldIdentifier
-
-        # an edited world is written where `flowedit edit` saved it, the local worlds root, not a pulled copy
-        if WorldIdentifier(root.name).resolve_write_sync().path.resolve() != root.resolve():
-            raise ValueError(f"{root} is not where `flowedit edit` saves {root.name}, so it is not written")
-
-
 def _cmd_read(args: argparse.Namespace) -> int:
     root = world_root(args.worlds, args.world)
     notes: list[str] = []
     site = open_site(root, args.scenario, None, notes)
     name = args.name or f"flowedit_{site.scenario or 'world'}"
     settings = S.load(args.settings, count=args.count, scale=args.scale, local_planner=args.local_planner)
-    base = _base(args.worlds, site) if site.edits else None
+    base = base_site(args.worlds, site) if site.edits else None
     result = read(site, settings, args.seed, notes, base=base)
     for note in result.notes:
         print(f"note: {note}", file=sys.stderr)
@@ -85,7 +62,7 @@ def _cmd_read(args: argparse.Namespace) -> int:
         print(render(result, name)["scenario.yaml"], end="")
         print("(dry run - pass --write to write it)", file=sys.stderr)
         return 0
-    _check_writable(args.worlds, args.world, root)
+    check_writable(args.worlds, args.world, root)
     try:
         out = write_scenario(result, name, force=args.force)
     except WouldOverwrite as exc:
@@ -174,13 +151,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
     root = world_root(args.worlds, args.world)
     notes: list[str] = []
     site = open_site(root, args.scenario, args.edit_seed, notes)
-    base = _base(args.worlds, site)
+    base = base_site(args.worlds, site)
     edits = [Edit(_edit_type(args.edit[0]), args.edit[1], _params(args.param))] if args.edit else []
     if args.param and not edits:
         raise ValueError("-p sets a param of --edit, pass --edit TYPE TARGET with it")
     if not edits and not args.dry_run:
         # the scenario goes into this world itself, the base world or one an earlier edit saved
-        _check_writable(args.worlds, args.world, root)
+        check_writable(args.worlds, args.world, root)
     settings = S.load(args.settings, count=args.count, scale=args.scale, local_planner=args.local_planner)
     out = args.out or default_out()
     prepared = prepare(site, base, edits, settings, args.seed, notes, dry_run=args.dry_run)
@@ -219,45 +196,22 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
 
 
 def _cmd_suite(args: argparse.Namespace) -> int:
-    import tempfile
-
-    from . import split as SP
-    from . import suite as SU
-
     doc = SP.load(args.split)
     parts = args.partition or list(SP.PARTITIONS)
     crowd = SP.crowd(doc, args.settings)
-    duration = float(doc.get("duration", 300.0))
-    out = args.out or SU.default_out(args.split)
-    if not args.no_generate and not args.dry_run:
-        with tempfile.TemporaryDirectory(prefix="flowedit_suite_") as manifests:
-            SP.regenerate_worlds(doc, Path(manifests), log=lambda m: print(m, file=sys.stderr))
-    stages = []
-    for job in SP.jobs(doc, parts):
-        root = world_root(args.worlds, job.world)
-        notes: list[str] = []
-        # a base world runs the source's scenario, an edited world names its own
-        source = doc["sources"][SP.base_of(job.world)].get("scenario")
-        site = open_site(root, source if SP.base_of(job.world) == job.world else None, None, notes)
-        if not args.dry_run:
-            _check_writable(args.worlds, job.world, root)
-        prepared = prepare(site, _base(args.worlds, site), [], crowd, job.seed, notes, dry_run=args.dry_run)
-        for note in notes:
-            print(f"note: {job.label}: {note}", file=sys.stderr)
-        stages.append(SU.stage(job.world, job.seed, prepared.scenario, duration, args.robot))
-    suite = SU.suite_doc(stages)
-    SU.pairs(suite)
-    header = [f"split {args.split.name}, partitions {', '.join(parts)}, crowd settings {S.digest(crowd)}", f"{len(stages)} stages, each one episode at the seed its name ends in; an edit stage pairs with its base world's stage at that seed"]
+    suite = SU.build(doc, crowd, parts, worlds=args.worlds, robot=args.robot, regenerate=not args.no_generate, dry_run=args.dry_run, log=lambda m: print(m, file=sys.stderr))
+    stages = len(suite["stages"])
     if args.dry_run:
         print(to_yaml(suite), end="")
-        print(f"(dry run - no scenario or suite written, {len(stages)} stages)", file=sys.stderr)
+        print(f"(dry run - no scenario or suite written, {stages} stages)", file=sys.stderr)
         return 0
+    header = [f"split {args.split.name}, partitions {', '.join(parts)}, crowd settings {S.digest(crowd)}", f"{stages} stages, each one episode at the seed its name ends in; an edit stage pairs with its base world's stage at that seed"]
     try:
-        written = SU.write(suite, out, header, force=args.force)
+        written = SU.write(suite, args.out or SU.default_out(args.split), header, force=args.force)
     except ValueError as exc:
         print(f"flowedit: {exc}", file=sys.stderr)
         return 1
-    print(f"wrote {written}: {len(stages)} stages")
+    print(f"wrote {written}: {stages} stages")
     print(SU.benchmark_command(written.stem, args.lanes))
     return 0
 
@@ -367,7 +321,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--partition", action="append", choices=SP.PARTITIONS, default=None, help="a partition to write; repeatable (default: all)")
     p.add_argument("--settings", type=Path, default=None, help="crowd settings YAML of every run, merged over the split's own `settings`")
     p.add_argument("--out", type=Path, default=None, help="suite file (default: <imported assets root>/suites/flowedit_<split name>.yaml, where `--suite flowedit_<split name>` finds it)")
-    p.add_argument("--robot", default="jackal", help="robot of every stage, parked off the map and unseen (default jackal, the robot of the shipped suites)")
+    p.add_argument("--robot", default=SU.ROBOT, help=f"robot of every stage, parked off the map and unseen (default {SU.ROBOT}, the robot of the shipped suites)")
     p.add_argument("--lanes", type=int, default=2, help="lanes in the printed benchmark call (default 2)")
     p.add_argument("--worlds", type=Path, default=None, help="worlds root to read (default: the ARENA_WORLD_PATH roots, then $ARENA_DIR/arena_simulation_setup/worlds, then the resolvers)")
     p.add_argument("--no-generate", action="store_true", help="skip generating the edited worlds again")

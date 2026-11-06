@@ -35,6 +35,7 @@ from typing import Any
 
 from arena_simulation_setup.tree.World.write import to_yaml
 
+from ..scenario.cli import _writable, world_root
 from . import settings as S
 from .edit import EDITS, EditType, Site, apply, dump_edits, open_site, save
 from .read import read
@@ -80,6 +81,30 @@ class Prepared:
 def scenario_name(scenario: str | None, settings: Mapping[str, Any], seed: int) -> str:
     """The generated scenario's name: one per settings and seed, so runs under other settings never overwrite it."""
     return f"flowedit_{scenario or 'world'}_{S.digest(settings)[:8]}_s{seed}"
+
+
+def base_site(worlds: Path | None, site: Site) -> Site:
+    """The unedited world `site` was edited from, the people's source: under `worlds` when it is there, else wherever the name resolves."""
+    if not site.edits:
+        return site
+    try:
+        base_root = world_root(worlds, site.base)
+    except FileNotFoundError:
+        base_root = world_root(None, site.base)
+    return open_site(base_root, site.scenario, site.seed, [])
+
+
+def check_writable(worlds: Path | None, world: str, root: Path) -> None:
+    """Refuse a world a scenario must not be written into."""
+    if not (root / EDITS).is_file():
+        # a shipped world is written in the source tree only
+        _writable(world_root(worlds, world, write=True))
+    elif worlds is None:
+        from arena_simulation_setup.tree.World import WorldIdentifier
+
+        # an edited world is written where `flowedit edit` saved it, the local worlds root, not a pulled copy
+        if WorldIdentifier(root.name).resolve_write_sync().path.resolve() != root.resolve():
+            raise ValueError(f"{root} is not where `flowedit edit` saves {root.name}, so it is not written")
 
 
 def prepare(site: Site, base: Site, edits: Sequence[Edit], settings: Mapping[str, Any], seed: int, notes: list[str] | None = None, *, dry_run: bool = False) -> Prepared:
@@ -519,4 +544,4 @@ def default_out() -> Path:
     return Path(data) / RUNS
 
 
-__all__ = ["DURATION_S", "EDITS", "INTERACTIONS", "RUNS", "Edit", "Extracted", "Prepared", "default_out", "done", "extract", "interaction_rows", "keyed", "launch_command", "names_at", "prepare", "provenance", "record", "scenario_name", "summary", "tracks", "uses"]
+__all__ = ["DURATION_S", "EDITS", "INTERACTIONS", "RUNS", "Edit", "Extracted", "Prepared", "base_site", "check_writable", "default_out", "done", "extract", "interaction_rows", "keyed", "launch_command", "names_at", "prepare", "provenance", "record", "scenario_name", "summary", "tracks", "uses"]

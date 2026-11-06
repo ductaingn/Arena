@@ -227,8 +227,6 @@ arena evaluation benchmark --suite flowedit_peds_pilot --contest '[{name: peds_o
 
 The suite's `launch` runs flatsim headless under lockstep with `human.robots.visible: false`, so the people never see the parked robot, and `references: false`, since the split names its own reference runs. The contestant needs no planner: `[{name: peds_only}]` brings the robot up with the sim's default adapter. `--dry-run` prints the suite without writing a scenario or the suite, and a suite file `flowedit suite` did not write is kept unless `--force`.
 
-Seed pairing also needs the runtime's per-person draws (walker parameters, seats, models) keyed on stable names rather than the env, which the runner counts up for every world: the HumanSim adapter's stable stream keys (`bugfix/humansim-stable-stream-keys`). Without them a base and its edit get different walkers although their seeds match.
-
 ## Crowd settings
 
 Global, not per site: the same file gives a crowd on any graph. Every key and its default is in [`settings.py`](settings.py); a file sets only what it changes, an unknown key is an error. A distribution (`mean`, `std`, `clip_low`, `clip_high`) given in a file replaces the default one whole, so a raised mean never keeps the default's clips, and a mean outside its own clips is an error. A need's own `initial`, `decay_rate` or `below` replaces the `"*"` entry's.
