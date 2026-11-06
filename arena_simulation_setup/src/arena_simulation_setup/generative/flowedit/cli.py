@@ -187,9 +187,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"note: {note}", file=sys.stderr)
     run_dir = out / prepared.run_id
     if args.dry_run:
-        from .run import launch_command
+        from .run import launch_command, with_planner
 
-        print(to_yaml({"run": str(run_dir), "world": prepared.site.name, "base": prepared.site.base, "edits": dump_edits(prepared.site)["edits"], "scenario": prepared.scenario, "launch": launch_command(prepared.site.name, prepared.scenario, run_dir / "humansim", args.launch_arg)}), end="")
+        launch = launch_command(prepared.site.name, prepared.scenario, run_dir / "humansim", with_planner(settings, args.launch_arg))
+        print(to_yaml({"run": str(run_dir), "world": prepared.site.name, "base": prepared.site.base, "edits": dump_edits(prepared.site)["edits"], "scenario": prepared.scenario, "launch": launch}), end="")
         print("(dry run - nothing saved or launched)", file=sys.stderr)
         return 0
     if done(run_dir) and not args.again:
@@ -210,11 +211,13 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
     doc = SP.load(args.split)
     out = args.out or default_out() / args.split.stem
     parts = args.partition or list(SP.PARTITIONS)
+    if args.crowd and args.settings:
+        raise ValueError("--crowd picks the split's crowds, --settings runs one file instead: pass one of them")
     if args.dry_run:
-        for job in SP.jobs(doc, parts):
-            print(f"{job.partition}\t{job.world}\tseed {job.seed}")
+        for job in SP.jobs(doc, parts, args.crowd, args.settings):
+            print(f"{job.crowd}\t{job.partition}\t{job.world}\tseed {job.seed}")
         return 0
-    counts = SP.sweep(doc, out, partitions=parts, settings=args.settings, jobs_at_once=args.jobs, domain_base=args.domain_base, regenerate=not args.no_generate, stagger=args.stagger, log=lambda m: print(m, file=sys.stderr))
+    counts = SP.sweep(doc, out, partitions=parts, chosen=args.crowd, settings=args.settings, jobs_at_once=args.jobs, domain_base=args.domain_base, regenerate=not args.no_generate, stagger=args.stagger, log=lambda m: print(m, file=sys.stderr))
     print(f"{out}: {counts['done']} recorded, {counts['skipped']} already there, {counts['failed']} failed")
     return 1 if counts["failed"] else 0
 
@@ -302,11 +305,12 @@ def _parser() -> argparse.ArgumentParser:
     p = verbs.add_parser(
         "sweep",
         help="record every run of a split",
-        description="generate the split's edited worlds again, then `flowedit run` every world of the chosen partitions once per seed, --jobs launches at a time on their own ROS domains; finished runs are skipped",
+        description="generate the split's edited worlds again, then `flowedit run` every world of the chosen partitions once per seed and crowd, --jobs launches at a time on their own ROS domains; finished runs are skipped",
     )
     p.add_argument("split", type=Path, help="the split file (see split.py)")
     p.add_argument("--partition", action="append", choices=["train", "held_out_edits", "held_out_worlds"], default=None, help="a partition to run; repeatable (default: all)")
-    p.add_argument("--settings", type=Path, default=None, help="crowd settings YAML of every run (default: the defaults, the training crowd)")
+    p.add_argument("--crowd", action="append", default=None, help="a crowd of the split's `crowds` to run; repeatable (default: all, or the defaults when the split has none)")
+    p.add_argument("--settings", type=Path, default=None, help="one crowd settings YAML to run on the chosen partitions instead of the split's crowds")
     p.add_argument("--out", type=Path, default=None, help=f"runs root (default: $ARENA_DATA_DIR/{RUNS}/<split name>)")
     p.add_argument("--jobs", type=int, default=1, help="launches at a time (default 1)")
     p.add_argument("--domain-base", type=int, default=150, help="ROS domain of the first launch slot, the next slots counting up (default 150)")

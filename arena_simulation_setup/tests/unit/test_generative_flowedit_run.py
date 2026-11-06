@@ -48,6 +48,13 @@ def test_the_launch_records_humansim_into_the_run() -> None:
     assert command[-1] == "robot:=jackal"
 
 
+def test_the_settings_planner_is_humansims_default_for_the_launch() -> None:
+    # visitors do not run their type under arena launch, so the planner reaches them only as the launch's default
+    assert R.with_planner(S.load(local_planner="orca"), ["robot:=jackal"]) == ["robot:=jackal", "humansim.local_planner:=orca"]
+    assert R.with_planner(S.load(local_planner="orca"), ["humansim.local_planner:=hsfm"]) == ["humansim.local_planner:=hsfm"]
+    assert R.with_planner(FEW) == []
+
+
 def test_an_edit_is_saved_and_its_scenario_has_the_people_of_the_base(worlds: Path) -> None:
     base = open_site(worlds / "hospital_1", "queue")
     plain = R.prepare(base, base, [], FEW, 0)

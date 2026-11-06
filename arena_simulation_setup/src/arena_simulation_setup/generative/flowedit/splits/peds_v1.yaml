@@ -42,3 +42,12 @@ partitions:
     - office_1__function_fountain__63b53335
     - office_1__access_reception_to_hallway_2__44c89ba8
     - office_1__layout_move_meeting_1_to_sub_hallway__05d4edbd
+# Crowd settings (crowds/*.yaml) and where each runs. train is the defaults; every test crowd differs from it in need
+# rates, crowd size or local planner, and runs on the held-out edits only.
+crowds:
+  train: {settings: crowds/train.yaml, partitions: [train, held_out_edits, held_out_worlds]}
+  test_rates: {settings: crowds/test_rates.yaml, partitions: [held_out_edits]}
+  test_size: {settings: crowds/test_size.yaml, partitions: [held_out_edits]}
+  test_orca: {settings: crowds/test_orca.yaml, partitions: [held_out_edits]}
+  test_hsfm: {settings: crowds/test_hsfm.yaml, partitions: [held_out_edits]}
+  test_all: {settings: crowds/test_all.yaml, partitions: [held_out_edits]}

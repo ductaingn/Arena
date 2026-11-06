@@ -102,6 +102,17 @@ def launch_command(world: str, scenario: str, record_dir: Path, extra: Sequence[
     ]
 
 
+def with_planner(settings: Mapping[str, Any], extra: Sequence[str] = ()) -> list[str]:
+    """`extra`, and HumanSim's default local planner set to the settings' one unless `extra` sets it.
+
+    The reader puts the planner on every type it writes, but a source's visitors do not run their type under `arena launch`
+    yet, so without the launch's default they would keep the training crowd's planner."""
+    planner = settings.get("local_planner")
+    if planner and not any(a.startswith("humansim.local_planner:=") for a in extra):
+        return [*extra, f"humansim.local_planner:={planner}"]
+    return list(extra)
+
+
 def _arena(env: dict[str, str]) -> tuple[list[str], str | None]:
     """The `arena` CLI as a command, and the directory to run it in.
 
@@ -222,7 +233,7 @@ def record(
         shutil.rmtree(humansim)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / RUN_FILE).unlink(missing_ok=True)
-    command = launch_command(prepared.site.name, prepared.scenario, humansim, launch_args)
+    command = launch_command(prepared.site.name, prepared.scenario, humansim, with_planner(prepared.settings, launch_args))
     env = dict(os.environ)
     # the edited world is saved outside the source tree, the base world's generated scenario inside it: the launch sees both
     env["ARENA_WORLD_PATH"] = os.pathsep.join(p for p in (str(prepared.site.root.parent), env.get("ARENA_WORLD_PATH", "")) if p)
@@ -296,4 +307,4 @@ def default_out() -> Path:
     return Path(data) / RUNS
 
 
-__all__ = ["EDITS", "RUNS", "Edit", "Prepared", "default_out", "done", "keyed", "launch_command", "prepare", "record", "scenario_name", "summary", "tracks"]
+__all__ = ["EDITS", "RUNS", "Edit", "Prepared", "default_out", "done", "keyed", "launch_command", "prepare", "record", "scenario_name", "summary", "tracks", "with_planner"]

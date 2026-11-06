@@ -196,12 +196,25 @@ flowedit run hospital_1 queue --edit function obj:fountain -p dwell=20 --setting
 
 `key` pairs an agent across runs: `<source_name>#<source_seq>` for a person an entrance released, never the agent id (HumanSim keys a released agent's draws on its source and release index), and the person's scenario name for the people the reader places, who are the same in every edit of a world. Tracks are cut to the first `--duration` seconds; `run.yaml` warns when the sim ran too slowly to fill them.
 
-`flowedit sweep <split> [--partition P] [--settings S] [--jobs N]` records every run of a split: it generates the split's edited worlds again, then runs each world of the chosen partitions once per seed, `--jobs` launches at a time, each on its own ROS domain from `--domain-base` (default 150). Runs land in `$ARENA_DATA_DIR/flowedit_runs/<split name>/`, one log per run in `_sweep/`; finished runs are skipped, so a sweep resumes. A split file ([`split.py`](split.py)) names the worlds of `train`, `held_out_edits` (other edits of the train worlds) and `held_out_worlds` (worlds with no run in train), and per base world the `flowedit generate` call that makes its edited worlds again under those names. [`splits/peds_v1.yaml`](splits/peds_v1.yaml) is the first.
+`flowedit sweep <split> [--partition P] [--crowd C] [--jobs N]` records every run of a split: it generates the split's edited worlds again, then runs each world of the chosen partitions once per seed and crowd, `--jobs` launches at a time, each on its own ROS domain from `--domain-base` (default 150). Runs land in `$ARENA_DATA_DIR/flowedit_runs/<split name>/`, one log per run in `_sweep/`; finished runs are skipped, so a sweep resumes. A split file ([`split.py`](split.py)) names the worlds of `train`, `held_out_edits` (other edits of the train worlds) and `held_out_worlds` (worlds with no run in train), per base world the `flowedit generate` call that makes its edited worlds again under those names, and its `crowds`: crowd settings files and the partitions each runs on. `--settings` runs one other file instead of the crowds. [`splits/peds_v1.yaml`](splits/peds_v1.yaml) is the first.
 
 ```bash
-flowedit sweep splits/peds_v1.yaml --jobs 2                                   # the training crowd
-flowedit sweep splits/peds_v1.yaml --partition held_out_edits --settings test_crowd.yaml
+flowedit sweep splits/peds_v1.yaml --jobs 3                          # every crowd of the split
+flowedit sweep splits/peds_v1.yaml --crowd test_orca --jobs 3
 ```
+
+`peds_v1`'s crowds, in [`splits/crowds/`](splits/crowds/): `train` is the defaults (need decay mean 0.5 /s, populate's count, HumanSim's default planner `sfm`) on every partition. Each test crowd runs on the held-out edits only and differs from it in one way, `test_all` in all three:
+
+| Crowd | Need decay mean | People at start | Local planner |
+|---|---|---|---|
+| `train` | 0.5 /s | populate's count | `sfm` |
+| `test_rates` | 1.5 /s | populate's count | `sfm` |
+| `test_size` | 0.5 /s | twice populate's count | `sfm` |
+| `test_orca` | 0.5 /s | populate's count | `orca` |
+| `test_hsfm` | 0.5 /s | populate's count | `hsfm` |
+| `test_all` | 1.5 /s | twice populate's count | `orca` |
+
+A crowd's `local_planner` also becomes HumanSim's launch default (`humansim.local_planner:=`), so entrance visitors switch with the placed people.
 
 Entrance visitors under `arena launch` do not yet follow their visitor type: they walk from the source straight to the sink, so only the reader's placed people carry the site's demand in the tracks.
 
@@ -230,5 +243,5 @@ entrances: {rate: 0.1, max_concurrent: 6, max_total: 30}
 | `generate.py` | sampling edits from a seed, geometry-only controls, the manifest |
 | `run.py` | one edit, settings and seed to a recorded run and its tracks |
 | `split.py` | split files and the sweep over them |
-| `splits/` | committed splits |
+| `splits/` | committed splits, and their crowd settings in `splits/crowds/` |
 | `cli.py` | `flowedit build`, `flowedit edit`, `flowedit generate`, `flowedit read`, `flowedit run`, `flowedit sweep` |

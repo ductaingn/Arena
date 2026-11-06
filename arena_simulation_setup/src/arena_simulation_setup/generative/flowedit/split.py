@@ -9,9 +9,14 @@ its base's `sources` entry, so the file is all a sweep needs:
     duration: 300            # seconds recorded per run
     seeds: [0]               # crowd seeds, every world runs once per seed
     partitions:
-      train: [hospital_1, hospital_1__9f4189dc, ...]
+      train: [hospital_1, hospital_1__move_fountain__6e1d6873, ...]
       held_out_edits: [...]  # other edits of the train worlds
       held_out_worlds: [...] # worlds, and their edits, with no run in train
+    crowds:                  # optional: crowd settings files (relative to the split) and the partitions each runs on
+      train: {settings: crowds/train.yaml, partitions: [train, held_out_edits, held_out_worlds]}
+      test_orca: {settings: crowds/test_orca.yaml, partitions: [held_out_edits]}
+
+Without `crowds` every partition runs once under the default crowd settings.
 """
 
 from __future__ import annotations
@@ -30,6 +35,9 @@ import yaml
 SPLIT_FORMAT = "flowedit-split/1"
 PARTITIONS = ("train", "held_out_edits", "held_out_worlds")
 SOURCE_KEYS = ("scenario", "seed", "per_type", "steps")
+CROWD_KEYS = ("settings", "partitions")
+#: The crowd a split without `crowds` runs: the default settings on every partition
+DEFAULT_CROWD = "default"
 
 
 def base_of(world: str) -> str:
@@ -63,11 +71,35 @@ def check(doc: Mapping[str, Any]) -> None:
         raise ValueError(f"held-out edits of {stray}, worlds that never run in train")
     if not isinstance(doc.get("seeds", [0]), list) or not doc.get("seeds", [0]):
         raise ValueError("seeds is a non-empty list of crowd seeds")
+    for name, crowd in (doc.get("crowds") or {}).items():
+        if not isinstance(crowd, Mapping) or (unknown := sorted(set(crowd) - set(CROWD_KEYS))):
+            raise ValueError(f"crowds.{name}: a mapping of {list(CROWD_KEYS)}")
+        if unknown := sorted(set(crowd.get("partitions") or []) - set(PARTITIONS)):
+            raise ValueError(f"crowds.{name}: unknown partitions {unknown}, known: {list(PARTITIONS)}")
+        if not crowd.get("partitions"):
+            raise ValueError(f"crowds.{name}: names no partition to run on")
+
+
+def crowds(doc: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """The split's crowds, name to settings file (None: the defaults) and partitions; the default crowd without `crowds`."""
+    if not doc.get("crowds"):
+        return {DEFAULT_CROWD: {"settings": None, "partitions": list(PARTITIONS)}}
+    return {name: {"settings": c.get("settings"), "partitions": list(c["partitions"])} for name, c in doc["crowds"].items()}
 
 
 def load(path: Path) -> dict[str, Any]:
+    """The split at `path`, checked, its crowds' settings files resolved against the split's directory and loaded once."""
+    from . import settings as S
+
     doc = yaml.safe_load(Path(path).read_text()) or {}
     check(doc)
+    for name, crowd in (doc.get("crowds") or {}).items():
+        if crowd.get("settings") is not None:
+            file = (Path(path).parent / crowd["settings"]).resolve()
+            if not file.is_file():
+                raise ValueError(f"crowds.{name}: no settings file {file}")
+            S.load(file)
+            crowd["settings"] = str(file)
     return doc
 
 
@@ -76,16 +108,33 @@ class Job:
     partition: str
     world: str
     seed: int
+    crowd: str = DEFAULT_CROWD
+    settings: Path | None = None
 
-    def argv(self, scenario: str | None, out: Path, duration: float, settings: Path | None) -> list[str]:
+    @property
+    def label(self) -> str:
+        return f"[{self.crowd}/{self.partition}] {self.world} seed {self.seed}"
+
+    def argv(self, scenario: str | None, out: Path, duration: float) -> list[str]:
         """`flowedit run` of this job: an edited world names its own scenario, a base world the source's."""
         args = ["run", self.world, *([scenario] if scenario and "__" not in self.world else []), "--seed", str(self.seed), "--duration", str(duration), "--out", str(out)]
-        return [*args, *(["--settings", str(settings)] if settings is not None else [])]
+        return [*args, *(["--settings", str(self.settings)] if self.settings is not None else [])]
 
 
-def jobs(doc: Mapping[str, Any], partitions: Iterable[str] = PARTITIONS) -> list[Job]:
-    """Every run of the chosen partitions: each world once per seed, in file order."""
-    return [Job(part, world, int(seed)) for part in partitions for world in (doc["partitions"].get(part) or []) for seed in doc.get("seeds", [0])]
+def jobs(doc: Mapping[str, Any], partitions: Iterable[str] = PARTITIONS, chosen: Iterable[str] | None = None, settings: Path | None = None) -> list[Job]:
+    """Every run of the chosen crowds on the chosen partitions: each world once per seed, crowd by crowd in file order.
+
+    `settings` runs that one settings file on the chosen partitions instead of the split's crowds."""
+    parts = list(partitions)
+    if settings is not None:
+        table = {Path(settings).stem: {"settings": str(settings), "partitions": parts}}
+    else:
+        table = crowds(doc)
+        if chosen is not None:
+            if unknown := sorted(set(chosen) - set(table)):
+                raise ValueError(f"unknown crowds {unknown}, the split has {list(table)}")
+            table = {name: c for name, c in table.items() if name in set(chosen)}
+    return [Job(part, world, int(seed), name, None if crowd["settings"] is None else Path(crowd["settings"])) for name, crowd in table.items() for part in parts if part in crowd["partitions"] for world in (doc["partitions"].get(part) or []) for seed in doc.get("seeds", [0])]
 
 
 def generate_argv(base: str, source: Mapping[str, Any]) -> list[str]:
@@ -113,6 +162,7 @@ def sweep(
     out: Path,
     *,
     partitions: Sequence[str] = PARTITIONS,
+    chosen: Sequence[str] | None = None,
     settings: Path | None = None,
     jobs_at_once: int = 1,
     domain_base: int = 150,
@@ -120,7 +170,8 @@ def sweep(
     stagger: float = 30.0,
     log=print,  # noqa: ANN001 - a print-like callable
 ) -> dict[str, int]:
-    """Record every run of the chosen partitions under `out`, `jobs_at_once` launches at a time, each on its own ROS domain.
+    """Record every run of the chosen crowds (default: all of the split's) on the chosen partitions under `out`,
+    `jobs_at_once` launches at a time, each on its own ROS domain. `settings` runs that one file instead of the crowds.
 
     The edited worlds are generated again first, so the names in the split resolve. A finished run is skipped. Returns the
     count of runs that finished, were skipped and failed; a failed run's reason is in its launch.log. Launches start at
@@ -132,15 +183,18 @@ def sweep(
     from . import settings as S
     from .run import done, scenario_name
 
-    crowd = S.load(settings)
+    loaded: dict[Path | None, dict[str, Any]] = {}
     duration = float(doc.get("duration", 300.0))
     counts = {"done": 0, "skipped": 0, "failed": 0}
     queue = []
-    for job in jobs(doc, partitions):
+    for job in jobs(doc, partitions, chosen, settings):
+        if job.settings not in loaded:
+            loaded[job.settings] = S.load(job.settings)
+        crowd = loaded[job.settings]
         # a finished run is skipped here, without a launch slot or a stagger
         if done(out / f"{job.world}__{scenario_name(doc['sources'][base_of(job.world)].get('scenario'), crowd, job.seed)}"):
             counts["skipped"] += 1
-            log(f"[{job.partition}] {job.world} seed {job.seed}: already recorded")
+            log(f"{job.label}: already recorded")
         else:
             queue.append(job)
     running: dict[int, tuple[Job, subprocess.Popen]] = {}
@@ -155,20 +209,20 @@ def sweep(
             last_start = time.monotonic()
             job = queue.pop(0)
             env = {**os.environ, "ROS_DOMAIN_ID": str(domain_base + slot)}
-            argv = job.argv(doc["sources"][base_of(job.world)].get("scenario"), out, duration, settings)
-            with (logs / f"{job.world}__s{job.seed}.log").open("w") as fh:
+            argv = job.argv(doc["sources"][base_of(job.world)].get("scenario"), out, duration)
+            with (logs / f"{job.crowd}__{job.world}__s{job.seed}.log").open("w") as fh:
                 running[slot] = (job, subprocess.Popen(_flowedit(argv), stdout=fh, stderr=subprocess.STDOUT, env=env))
-            log(f"[{job.partition}] {job.world} seed {job.seed}: started on domain {domain_base + slot}")
+            log(f"{job.label}: started on domain {domain_base + slot}")
         time.sleep(2.0)
         for slot, (job, proc) in list(running.items()):
             if proc.poll() is None:
                 continue
             del running[slot]
-            text = (logs / f"{job.world}__s{job.seed}.log").read_text()
+            text = (logs / f"{job.crowd}__{job.world}__s{job.seed}.log").read_text()
             state = "failed" if proc.returncode else "skipped" if "already recorded" in text else "done"
             counts[state] += 1
-            log(f"[{job.partition}] {job.world} seed {job.seed}: {state}" + (f" ({text.strip().splitlines()[-1] if text.strip() else proc.returncode})" if state == "failed" else ""))
+            log(f"{job.label}: {state}" + (f" ({text.strip().splitlines()[-1] if text.strip() else proc.returncode})" if state == "failed" else ""))
     return counts
 
 
-__all__ = ["PARTITIONS", "SPLIT_FORMAT", "Job", "base_of", "check", "generate_argv", "jobs", "load", "sweep"]
+__all__ = ["PARTITIONS", "SPLIT_FORMAT", "Job", "base_of", "check", "crowds", "generate_argv", "jobs", "load", "sweep"]

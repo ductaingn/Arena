@@ -1,0 +1,5 @@
+# The training crowd: the defaults of settings.py, written down as they are, so its runs keep their names.
+#   need rates  decay_rate mean 0.5 /s (std 0.15, clips 0.1-2.0), sought below 30, initial mean 60
+#   size        populate's count, 2 per room of the target role (scale 1.0)
+#   planner     HumanSim's launch default, sfm
+{}

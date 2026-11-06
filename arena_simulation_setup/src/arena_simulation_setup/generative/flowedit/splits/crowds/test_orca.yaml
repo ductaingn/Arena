@@ -1,0 +1,2 @@
+# Test crowd: ORCA local planner instead of the training crowd's social force model (sfm).
+local_planner: orca

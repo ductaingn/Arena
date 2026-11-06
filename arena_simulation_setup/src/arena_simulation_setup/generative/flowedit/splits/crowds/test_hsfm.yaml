@@ -1,0 +1,2 @@
+# Test crowd: headed social force model (hsfm) instead of the training crowd's sfm.
+local_planner: hsfm
