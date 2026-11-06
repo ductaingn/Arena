@@ -223,8 +223,8 @@ def test_the_demand_only_node_faces_where_its_model_did_and_is_used_as_it_was(qu
     ((_, old),) = _facts(queue.graph, "obj:gathering_area", "at")
     ((_, node),) = _facts(moved.graph, "obj:gathering_area_demand", "at")
     assert (node["x"], node["y"]) == (old["x"], old["y"])
-    front = old["yaw"] - math.pi / 2  # the bench's annotated front is -y, the node's is +x
-    assert node["yaw"] == pytest.approx(math.atan2(math.sin(front), math.cos(front)), abs=1e-3)
+    queued = old["yaw"] - math.pi / 2 - math.pi  # the bench's front is -y; the node, without a face, is queued behind its yaw
+    assert node["yaw"] == pytest.approx(math.atan2(math.sin(queued), math.cos(queued)), abs=1e-3)
     assert _facts(moved.graph, "obj:gathering_area_demand", "affords") == _facts(queue.graph, "obj:gathering_area", "affords") != []
     assert not _facts(moved.graph, "obj:gathering_area", "affords")
 

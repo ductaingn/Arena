@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -413,3 +414,26 @@ def test_raised_objects_are_neither_moved_nor_copied() -> None:
     assert raised and not raised & set(floor_objects(site))
     moved = {chain.site.edits[0].target for chain in generate(site, seed=0, per_type=10, types=[EditType.MOVE])}
     assert moved and not moved & raised
+
+
+@pytest.mark.parametrize(
+    ("face", "angle"),
+    [("+x", 0.0), ("+y", math.pi / 2), ("-x", math.pi), ("-y", -math.pi / 2), ("xy", math.pi / 4), ("90", -math.pi / 2), (-180, 0.0)],
+)
+def test_a_face_turns_to_the_front_the_runtime_queues_at(face: str | int, angle: float) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import face_front
+
+    front = face_front(face)
+    assert front is not None
+    assert math.cos(front) == pytest.approx(math.cos(angle), abs=1e-9)
+    assert math.sin(front) == pytest.approx(math.sin(angle), abs=1e-9)
+
+
+def test_without_a_known_face_people_queue_behind_the_yaw(queue: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arena_simulation_setup.generative.flowedit import generate
+
+    assert generate.face_front("up") is None
+    monkeypatch.setitem(generate._FACES, (queue.root, "Some/Model"), None)
+    monkeypatch.setitem(generate._FACES, (queue.root, "Odd/Model"), "up")
+    assert generate.front_angle(queue.root, "Some/Model") == pytest.approx(math.pi)
+    assert generate.front_angle(queue.root, "Odd/Model") == pytest.approx(math.pi)

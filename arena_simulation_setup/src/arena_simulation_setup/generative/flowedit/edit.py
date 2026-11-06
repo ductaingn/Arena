@@ -249,16 +249,16 @@ def _rederive(world: World, graph: Scene) -> None:
 
 
 def _front_pose(site: Site, model: object, pose: Mapping[str, Any]) -> dict[str, Any]:
-    """`pose` turned so its +x points where `model`'s annotated front (`face`) does. A node without a model is used from
-    its +x side, as is a model without `face`, so the demand-only node is approached and queued at from the side
-    people used its model from."""
+    """`pose` turned so the demand-only node is queued at from the side people used `model` from. The runtime queues an
+    object without an annotated `face`, as a node without a model is, behind its yaw, and `model` at
+    `generate.front_angle`, so the node's yaw is the model's yaw plus that angle minus pi."""
     from .generate import front_angle, resolve_footprints  # generate imports this module
 
     if not isinstance(model, str) or not model:
         return dict(pose)
     resolve_footprints(site, [model])
-    turn = front_angle(site.root, model)
-    if not turn:
+    turn = math.remainder(front_angle(site.root, model) - math.pi, math.tau)
+    if abs(turn) < 1e-9:
         return dict(pose)
     yaw = float(pose.get("yaw", 0.0)) + turn
     return {**pose, "yaw": round(math.atan2(math.sin(yaw), math.cos(yaw)), 4)}
@@ -266,7 +266,7 @@ def _front_pose(site: Site, model: object, pose: Mapping[str, Any]) -> dict[str,
 
 def _leave_demand(site: Site, obj: str, level_id: str, pose: Mapping[str, Any]) -> None:
     """Move the demand facts of `obj` (`DEMAND_VERBS`, so also how people use it) onto a new graph-only node
-    `<obj>_demand` without a model, posed where `obj` stands and turned to its front (`_front_pose`)."""
+    `<obj>_demand` without a model, posed where `obj` stands and turned so people queue at the same side (`_front_pose`)."""
     demand = [f for f in site.graph.facts if f.subject == obj and f.verb in DEMAND_VERBS]
     if not demand:
         raise ValueError(f"{obj} has no demand to leave")
