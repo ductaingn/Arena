@@ -27,7 +27,7 @@
 	update = checkout
 [submodule "arena_robots"]
 	path = arena_robots
-	url = https://github.com/arena-robots/arena_robots.git
+	url = https://github.com/kkieslich/arena_robots.git
 	branch = jazzy
 	update = checkout
 [submodule "humansim"]
