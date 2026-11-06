@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +51,7 @@ def test_every_type_saves_a_world_that_loads(queue: Site, local_root: Path, edit
     assert path.parent == local_root / "worlds"
     WorldIdentifier(path.name).resolve_sync().load()
     record = yaml.safe_load((path / EDITS).read_text())
-    assert record["edits"] == [{"id": path.name.split("__")[1], "parent": "hospital_1", "type": edit_type, "target": target, "params": params}]
+    assert record["edits"] == [{"id": path.name.split("__")[-1], "parent": "hospital_1", "type": edit_type, "target": target, "params": params}]
     assert load(path / GRAPH).validate() == []
 
 
@@ -64,6 +65,22 @@ def test_apply_leaves_its_site_alone_and_names_the_edit_by_its_record(queue: Sit
 
 def test_int_and_float_params_name_the_same_edit(queue: Site) -> None:
     assert apply(queue, "move", "obj:fountain", {"x": 15}).name == apply(queue, "move", "obj:fountain", {"x": 15.0}).name
+
+
+def test_world_names_say_what_the_edit_did_and_end_in_its_id(queue: Site) -> None:
+    moved = apply(queue, "move", "obj:fountain", {"x": 15.0, "y": 25.0})
+    assert moved.name == f"hospital_1__move_fountain__{moved.edits[-1].id}"
+    assert moved.key == f"hospital_1__{moved.edits[-1].id}"
+    left = apply(queue, "move", "obj:fountain", {"x": 15.0, "y": 25.0, "leave_demand": True})
+    assert left.name == f"hospital_1__move_fountain_leave_demand__{left.edits[-1].id}"
+    assert apply(queue, "layout", "door:or_door", {"op": "remove"}).name.startswith("hospital_1__layout_remove_or_door__")
+
+
+def test_the_readable_name_stays_out_of_the_ids(queue: Site) -> None:
+    first = apply(queue, "move", "obj:fountain", {"x": 15.0})
+    second = apply(first, "layout", "door:or_door", {"op": "remove"})
+    assert second.edits[-1].parent == first.key
+    assert second.name.split("__")[0] == "hospital_1" and second.name.count("__") == 2
 
 
 def test_moved_scenario_object_changes_room_only_in_the_graph(queue: Site) -> None:
@@ -137,8 +154,8 @@ def test_edits_chain_from_a_saved_world(queue: Site) -> None:
     second = apply(reopened, "layout", "door:or_door", {"op": "remove"})
     path = save(second)
     record = yaml.safe_load((path / EDITS).read_text())
-    assert [e["parent"] for e in record["edits"]] == ["hospital_1", first.name]
-    assert path.name == f"hospital_1__{record['edits'][-1]['id']}"
+    assert [e["parent"] for e in record["edits"]] == ["hospital_1", first.key]
+    assert path.name == f"hospital_1__2_edits_layout_remove_or_door__{record['edits'][-1]['id']}"
     assert _rooms(load(path / GRAPH), "obj:fountain") == ["room:sub_hallway"]
 
 
@@ -194,6 +211,22 @@ def test_a_formation_anchored_at_the_moved_object_follows_its_demand(queue: Site
     moved = apply(queue, "move", "obj:gathering_area", {"x": 16.0, "leave_demand": True})
     ((_, params),) = _facts(moved.graph, "obj:gathering_area_demand", "has_formation")
     assert params["anchor_ref"] == "gathering_area_demand"
+
+
+def test_the_demand_only_node_faces_where_its_model_did_and_is_used_as_it_was(queue: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arena_simulation_setup.generative.flowedit import generate
+
+    key = (queue.root, str(queue.graph.entities["obj:gathering_area"].props["model"]))
+    monkeypatch.setitem(generate._FOOTPRINTS, key, None)  # resolved: the tests have no object assets
+    monkeypatch.setitem(generate._FACES, key, "-y")
+    moved = apply(queue, "move", "obj:gathering_area", {"x": 16.0, "leave_demand": True})
+    ((_, old),) = _facts(queue.graph, "obj:gathering_area", "at")
+    ((_, node),) = _facts(moved.graph, "obj:gathering_area_demand", "at")
+    assert (node["x"], node["y"]) == (old["x"], old["y"])
+    queued = old["yaw"] - math.pi / 2 - math.pi  # the bench's front is -y; the node, without a face, is queued behind its yaw
+    assert node["yaw"] == pytest.approx(math.atan2(math.sin(queued), math.cos(queued)), abs=1e-3)
+    assert _facts(moved.graph, "obj:gathering_area_demand", "affords") == _facts(queue.graph, "obj:gathering_area", "affords") != []
+    assert not _facts(moved.graph, "obj:gathering_area", "affords")
 
 
 def test_move_leaving_demand_needs_demand_and_a_free_name(queue: Site) -> None:

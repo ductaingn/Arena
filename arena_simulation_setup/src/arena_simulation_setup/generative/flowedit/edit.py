@@ -6,6 +6,8 @@ import copy
 import enum
 import hashlib
 import json
+import math
+import re
 import shutil
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -33,6 +35,8 @@ GRAPH = "flowgraph.yaml"
 EDITS = "edits.yaml"
 SEPARATOR = "__"
 ID_LENGTH = 8
+#: Longest readable part of an edited world's name (`describe`), the id after it keeps names unique.
+SLUG_LENGTH = 40
 SERVICE_KEYS = ("capacity", "interaction_radius")
 DWELL_KEYS = ("mean", "std", "clip_low", "clip_high")
 #: How an object is used (`affords`) is part of its demand: it moves with a left demand and goes with a cleared one.
@@ -112,9 +116,25 @@ class Site:
     edits: list[Edit] = attrs.field(factory=list)
 
     @property
-    def name(self) -> str:
-        """The world name: `base` for an unedited site, else `<base>__<last edit id>`."""
+    def key(self) -> str:
+        """The site's identity: `base` for an unedited site, else `<base>__<last edit id>`; an edit names its parent by it."""
         return f"{self.base}{SEPARATOR}{self.edits[-1].id}" if self.edits else self.base
+
+    @property
+    def name(self) -> str:
+        """The world name: `base` for an unedited site, else `<base>__<what the edits did>__<last edit id>`."""
+        return SEPARATOR.join((self.base, describe(self.edits), self.edits[-1].id)) if self.edits else self.base
+
+
+def describe(edits: Sequence[Edit]) -> str:
+    """What `edits` did, readable in a world name: the last edit's type, layout op, target and switched-on flags, after
+    the chain's length when it has more than one edit. Lowercase words joined by single underscores, at most SLUG_LENGTH."""
+    last = edits[-1]
+    words = [last.type.value, str(last.params.get("op", "")), last.target.partition(":")[2] or last.target, *(k for k in FLAGS if last.params.get(k))]
+    if len(edits) > 1:
+        words.insert(0, f"{len(edits)}_edits")
+    slug = re.sub(r"[^a-z0-9]+", "_", "_".join(w for w in words if w).lower()).strip("_")
+    return slug[:SLUG_LENGTH].rstrip("_") or last.type.value
 
 
 def _load_world(root: Path) -> World:
@@ -230,8 +250,25 @@ def _rederive(world: World, graph: Scene) -> None:
             graph.add_fact(f"room:{room}", "contains", obj, source=DERIVED)
 
 
+def _front_pose(site: Site, model: object, pose: Mapping[str, Any]) -> dict[str, Any]:
+    """`pose` turned so the demand-only node is queued at from the side people used `model` from. The runtime queues an
+    object without an annotated `face`, as a node without a model is, behind its yaw, and `model` at
+    `generate.front_angle`, so the node's yaw is the model's yaw plus that angle minus pi."""
+    from .generate import front_angle, resolve_footprints  # generate imports this module
+
+    if not isinstance(model, str) or not model:
+        return dict(pose)
+    resolve_footprints(site, [model])
+    turn = math.remainder(front_angle(site.root, model) - math.pi, math.tau)
+    if abs(turn) < 1e-9:
+        return dict(pose)
+    yaw = float(pose.get("yaw", 0.0)) + turn
+    return {**pose, "yaw": round(math.atan2(math.sin(yaw), math.cos(yaw)), 4)}
+
+
 def _leave_demand(site: Site, obj: str, level_id: str, pose: Mapping[str, Any]) -> None:
-    """Move the demand facts of `obj` onto a new graph-only node `<obj>_demand` without a model, posed where `obj` stands."""
+    """Move the demand facts of `obj` (`DEMAND_VERBS`, so also how people use it) onto a new graph-only node
+    `<obj>_demand` without a model, posed where `obj` stands and turned so people queue at the same side (`_front_pose`)."""
     demand = [f for f in site.graph.facts if f.subject == obj and f.verb in DEMAND_VERBS]
     if not demand:
         raise ValueError(f"{obj} has no demand to leave")
@@ -241,7 +278,7 @@ def _leave_demand(site: Site, obj: str, level_id: str, pose: Mapping[str, Any]) 
     if node in site.graph.entities or any(name in names for names in site.world.names().values()):
         raise ValueError(f"{name!r} is already taken")
     site.graph.add_entity(node)
-    site.graph.add_fact(node, "at", f"floor:{level_id}", dict(pose))
+    site.graph.add_fact(node, "at", f"floor:{level_id}", _front_pose(site, site.graph.entities[obj].props.get("model"), pose))
     for fact in demand:
         params = dict(fact.params)
         if fact.verb == "has_formation" and params.get("anchor_ref") == old_name:
@@ -608,7 +645,7 @@ def apply(site: Site, edit_type: EditType | str, target: str, params: Mapping[st
     """A new site: `site` with the edit applied and recorded, `site` itself unchanged."""
     if edit_type not in tuple(EditType):
         raise ValueError(f"edit type {edit_type!r} is not one of {', '.join(EditType)}")
-    edit = Edit(type=EditType(edit_type), target=target, params=dict(params or {}), parent=site.name)
+    edit = Edit(type=EditType(edit_type), target=target, params=dict(params or {}), parent=site.key)
     edited = _copy(site)
     OPERATIONS[edit.type](edited, edit)
     edited.world.validate()

@@ -27,7 +27,7 @@ flowedit read hospital_1__b6b7b494 --settings crowd.yaml --seed 3 --write
 
 ```bash
 flowedit edit hospital_1 move obj:fountain --scenario queue -p x=15 -p y=11.5 --write
-flowedit edit hospital_1__b6b7b494 layout door:or_door -p op=remove --write
+flowedit edit hospital_1__move_fountain__b6b7b494 layout door:or_door -p op=remove --write
 ```
 
 `flowedit generate <world> [--scenario <scenario>] [--seed N] [--per-type K] [--steps N] [--types move,...] [--controls]` samples edits with the [generator](#generator). A dry run prints the manifest, `--write` saves every edited world and writes the manifest to `$ARENA_ASSETS_DIR_LOCAL/flowedit/<world>__seed<seed>.yaml` (or `--manifest`).
@@ -78,7 +78,7 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 
 | Type | Target | Params | Graph | `world.yaml` |
 |---|---|---|---|---|
-| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged), `leave_demand: true` (the demand stays at the old spot) | `at`; with `leave_demand` the demand facts go to a new `obj:<name>_demand` at the old pose | the pose, for a world object, its height, roll and pitch kept; with `leave_demand` its `humansim:` block keeps only `seats` |
+| `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged), `leave_demand: true` (the demand stays at the old spot) | `at`; with `leave_demand` the demand facts, `affords` among them, go to a new `obj:<name>_demand` at the old spot, turned so people queue at the model's front | the pose, for a world object, its height, roll and pitch kept; with `leave_demand` its `humansim:` block keeps only `seats` |
 | `insert` | `obj:<new name>` | `model`, `x`, `y`, `z` (0), `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
 | `remove` | `obj:<name>` | none | the entity and every fact about it | the object, and its `kg.yaml` entity |
 | `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`, `clear: true` (first drop all demand, the formation included) | `serves`, `satisfies`, `dwells` (`from: edit:<id>`), `has_formation` (by `clear`) | the `humansim:` block, for a world object |
@@ -88,12 +88,12 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 | `layout` | `wall:<level>/<index>`, `wall:<level>` to add | `op: add` (`path`, `closed`, `kind`, `material`), `move` (`path` or `offset`), `remove` | none | the `walls:` path at that index |
 
 - **Scenario objects** (the fountain of `queue`) change only in the graph. The [reader](#reading-a-site) writes them into the scenario.
-- **Demand-only nodes** (`obj:<name>_demand`, an object without `model`) also live only in the graph. The reader writes each as a PEDS target without an obstacle (`model: ""`). A formation anchored at `<name>` by name is anchored at the new node. They can be moved, removed and given another function like any graph object; the generator never moves or copies them, having no model.
+- **Demand-only nodes** (`obj:<name>_demand`, an object without `model`) also live only in the graph. The reader writes each as a PEDS target without an obstacle (`model: ""`). The runtime queues an object without an annotated `face` behind its yaw, and a node without a model has none, so the node is turned to put that side where its model's front was: people queue on the same side as before the move. A formation anchored at `<name>` by name is anchored at the new node. They can be moved, removed and given another function like any graph object; the generator never moves or copies them, having no model.
 - **Doors:** a moved or added door must lie on a wall. A door moved or removed from a gap left in its wall gets the gap closed with a wall styled like the wall at its start. Walls drawn through a door are cut at runtime anyway.
 - **Walls:** only `walls:` paths count. Walls from a zone's `walls: outline` are not addressable.
 - **Checks** stay basic: unknown target, taken name, door off a wall, then `World.validate` and the graph's vocabulary. Rules about rooms or overlap belong to the edit generator.
 
-`save` writes the world to the writable local root (`$ARENA_ASSETS_DIR_LOCAL/worlds`, see [worlds/README.md](../../../../worlds/README.md#how-worldidentifier-resolves-a-name)) as `<base>__<id>`. `<id>` is a hash of the last edit's record, with ints read as floats and false flags (`leave_demand`, `clear`, `remove`) left out. The record names its parent world, so the hash also names the whole chain. The save copies the source world's `assets/`, and writes `flowgraph.yaml` and `edits.yaml` next to `world.yaml`. The scenarios are not copied.
+`save` writes the world to the writable local root (`$ARENA_ASSETS_DIR_LOCAL/worlds`, see [worlds/README.md](../../../../worlds/README.md#how-worldidentifier-resolves-a-name)) as `<base>__<what>__<id>`, e.g. `hospital_1__move_fountain__9f4189dc`. `<what>` says what the edits did: the last edit's type, layout `op`, target name and switched-on flags, after `<n>_edits` for a chain (`describe`, at most 40 characters). `<id>` is a hash of the last edit's record, with ints read as floats and false flags (`leave_demand`, `clear`, `remove`) left out. The record names its parent by the parent's key `<base>__<id>` (`Site.key`), so the hash also names the whole chain and the readable part never enters it. The save copies the source world's `assets/`, and writes `flowgraph.yaml` and `edits.yaml` next to `world.yaml`. The scenarios are not copied.
 
 ```yaml
 format: flowedit-edits/1
@@ -109,9 +109,9 @@ edits:
 
 [`generate.py`](generate.py) samples edits of every type on a site from a seed. `generate(site, seed, per_type, steps, types)` makes, per type, `per_type` chains of up to `steps` edits (default one), each starting with an edit of that type; later steps draw their type from `types`, and a drawn type with no edit (a function edit once the only object with a need is gone) gives way to the others. Each step draws a proposal, `apply` checks it, and a refused one is drawn again, up to `MAX_TRIES`. A site with nothing to edit, or no valid proposal, gives a note instead, which names the last refusal. A chain whose first edit fails is left out; one whose later step finds no edit of any type ends there.
 
-- **Determinism:** one `random.Random` per step, keyed by the current world's name (which names the chain so far), the scenario, seed, step, type and index. Candidates are sorted before every draw and spots rounded to cm, so the same site, seed and code give the same edits and a shorter chain is a prefix of a longer one. No two chains reach the same world at the same step: a duplicate is drawn again, and that retry may take any object, not only one with a need. Footprints come from asset bounds where they resolve, else a 0.8 m box, so a machine with other assets at hand can draw other spots; the manifest carries `generator_version`.
+- **Determinism:** one `random.Random` per step, keyed by the current world's key (`<base>__<id>`, which names the chain so far), the scenario, seed, step, type and index. Candidates are sorted before every draw and spots rounded to cm, so the same site, seed and code give the same edits and a shorter chain is a prefix of a longer one. No two chains reach the same world at the same step: a duplicate is drawn again, and that retry may take any object, not only one with a need. Footprints come from asset bounds where they resolve, else a 0.8 m box, so a machine with other assets at hand can draw other spots; the manifest carries `generator_version`.
 - **On the floor:** spots are drawn on the floor, so a world object standing higher than 5 cm (on a table, a shelf or a wall) is neither moved nor copied.
-- **Spots** (`move`, `insert`): inside an allowed zone (not a stair, elevator, lift or shaft), the footprint clear of the zone's edge, walls, door spans (0.8 m) and, by 0.3 m, every object's footprint. A moved object's own old footprint counts too, so the inert copy of its control never overlaps the original.
+- **Spots** (`move`, `insert`): inside an allowed zone (not a stair, elevator, lift or shaft), the footprint clear of the zone's edge, walls, door spans (0.8 m) and, by 0.3 m, every object's footprint. A moved object's own old footprint counts too, so the inert copy of its control never overlaps the original. Every spot stands against a wall of its zone: it is drawn along the parts of the zone's edges a wall runs along (within 0.3 m of the edge's line and 10° of its direction, parts shorter than 0.6 m skipped, so a door gap only cuts its edge and a wall stub or a wall meeting the edge gives none), as close as those gaps allow, with a wall behind the middle and both ends of the object's back, and the model is turned so its annotated front (`face` in its annotation.yaml, read as the runtime reads it; without one the side behind its yaw, where the runtime queues it) points away from that wall into the room; a local move draws only along the walls within reach.
 
 | Type | Target | Params drawn |
 |---|---|---|
@@ -137,7 +137,7 @@ The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type
 
 ```yaml
 format: flowedit-generated/1
-generator_version: 2
+generator_version: 4
 base: hospital_1
 scenario: queue
 seed: 0
@@ -145,13 +145,13 @@ per_type: 1
 steps: 1
 fields: [capacity, dwell]
 chains:
-- world: hospital_1__1a2b3c4d
+- world: hospital_1__move_fountain__1a2b3c4d
   edits:
   - {type: move, target: 'obj:fountain', id: 1a2b3c4d, function_carrying: true, scope: room}
-  path: /…/worlds/hospital_1__1a2b3c4d
+  path: /…/worlds/hospital_1__move_fountain__1a2b3c4d
   controls:
-  - {kind: inert_object, world: hospital_1__5e6f7a8b, ids: [5e6f7a8b], path: /…/worlds/hospital_1__5e6f7a8b}
-  - {kind: moved_without_demand, world: hospital_1__9c0d1e2f, ids: [9c0d1e2f], path: /…/worlds/hospital_1__9c0d1e2f}
+  - {kind: inert_object, world: hospital_1__insert_fountain_inert__5e6f7a8b, ids: [5e6f7a8b], path: /…/worlds/hospital_1__insert_fountain_inert__5e6f7a8b}
+  - {kind: moved_without_demand, world: hospital_1__move_fountain_leave_demand__9c0d1e2f, ids: [9c0d1e2f], path: /…/worlds/hospital_1__move_fountain_leave_demand__9c0d1e2f}
 ```
 
 ## Reading a site

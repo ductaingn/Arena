@@ -15,30 +15,30 @@ seeds: [0]
 partitions:
   train:
     - hospital_1
-    - hospital_1__9f4189dc  # move fountain
-    - hospital_1__6f3a2bdf  # move fountain
-    - hospital_1__23a2f73a  # insert water dispenser
-    - hospital_1__95fd8b6d  # insert water dispenser
-    - hospital_1__6ed0b4ea  # remove fountain
-    - hospital_1__920f4b7c  # remove waiting_sofa_3
-    - hospital_1__638f0641  # function fountain
-    - hospital_1__efd48775  # function fountain
-    - hospital_1__c485e3a4  # access patient_ward_door_2
-    - hospital_1__d24b53b6  # access patient_ward_door_1
-    - hospital_1__54fbb0eb  # layout wc_waiting_stall_3_door
-    - hospital_1__5af68761  # layout doctors_resting_room_door
+    - hospital_1__move_fountain__6e1d6873
+    - hospital_1__move_fountain__667253ac
+    - hospital_1__insert_gen_sm_waterdispenser_01a_1__ea26097f
+    - hospital_1__insert_gen_sm_waterdispenser_01a_1__1e59d925
+    - hospital_1__remove_fountain__6ed0b4ea
+    - hospital_1__remove_waiting_sofa_3__920f4b7c
+    - hospital_1__function_fountain__638f0641
+    - hospital_1__function_fountain__efd48775
+    - hospital_1__access_patient_ward_door_2__c485e3a4
+    - hospital_1__access_patient_ward_door_1__d24b53b6
+    - hospital_1__layout_move_wc_waiting_stall_3_door__54fbb0eb
+    - hospital_1__layout_move_doctors_resting_room_door__5af68761
   held_out_edits:
-    - hospital_1__de49ece0  # move fountain
-    - hospital_1__2080d201  # insert water dispenser
-    - hospital_1__c4bd8e8b  # remove wc_pharmacy_toilet_paper_2
-    - hospital_1__daff8b6d  # function fountain
-    - hospital_1__8866ca6d  # access schedule fire_alarm
-    - hospital_1__71e5baec  # layout gen_door_1
+    - hospital_1__move_fountain__6a2c296b
+    - hospital_1__insert_gen_sm_waterdispenser_01a_1__4d2a96ff
+    - hospital_1__remove_wc_pharmacy_toilet_paper_2__c4bd8e8b
+    - hospital_1__function_fountain__daff8b6d
+    - hospital_1__access_fire_alarm__8866ca6d
+    - hospital_1__layout_add_gen_door_1__71e5baec
   held_out_worlds:
     - office_1
-    - office_1__59fe6ae2  # move fountain
-    - office_1__efc298f4  # insert water cooler
-    - office_1__3578b71c  # remove fountain
-    - office_1__63b53335  # function fountain
-    - office_1__44c89ba8  # access reception_to_hallway_2
-    - office_1__05d4edbd  # layout meeting_1_to_sub_hallway
+    - office_1__move_fountain__2af43765
+    - office_1__insert_gen_water_cooler_1__bed8a70e
+    - office_1__remove_fountain__3578b71c
+    - office_1__function_fountain__63b53335
+    - office_1__access_reception_to_hallway_2__44c89ba8
+    - office_1__layout_move_meeting_1_to_sub_hallway__05d4edbd
