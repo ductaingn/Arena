@@ -10,6 +10,7 @@ from arena_simulation_setup.generative.flowedit.build import presets
 from arena_simulation_setup.generative.flowedit.cli import main
 from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EDITS, GRAPH, Site, apply, open_site, save
 from arena_simulation_setup.kg import Scene, Value, dumps, load
+from flowedit_docks import CHARGER, DOCKED, DOCKED_IDS, FACING_NORTH, LOCKER
 
 if TYPE_CHECKING:
     from arena_simulation_setup.shared.entities import Obstacle
@@ -273,3 +274,62 @@ def test_schedule_access_keeps_remove_out_of_its_preset(queue: Site) -> None:
     assert timed.edits[-1].params["windows"] == [{"start": 60, "end": 90}]
     with pytest.raises(ValueError, match="windows are a list"):
         apply(queue, "access", "schedule:fire_alarm", {"windows": [{"start": 60}]})
+
+
+def _docked(model: str, back: float, dock: list[list[float]]) -> dict[str, Any]:
+    return {"model": model, "x": 20.0, "y": back, "yaw": FACING_NORTH, "dock": dock}
+
+
+def _posed(x: float, y: float, yaw: float, dock: list[list[float]]) -> list[tuple[float, float]]:
+    """`dock` turned by `yaw` and moved to `x`, `y`, to the mm."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    return [(round(x + c * px - s * py, 3), round(y + s * px + c * py, 3)) for px, py in dock]
+
+
+def _dock_in_level(site: Site, name: str) -> list[tuple[float, float]] | None:
+    corners = site.world.levels["0"].lookup_zone_polygon(name)
+    return None if corners is None else [(round(c.x, 3), round(c.y, 3)) for c in corners]
+
+
+def _saved_objects(path: Path) -> dict[str, dict[str, Any]]:
+    return {o["name"]: o for o in yaml.safe_load((path / "world.yaml").read_text())["levels"][0]["objects"]}
+
+
+@pytest.mark.parametrize(("name", "model", "back", "dock"), DOCKED, ids=DOCKED_IDS)
+def test_insert_writes_a_dock_that_makes_the_object_a_goto_target(queue: Site, name: str, model: str, back: float, dock: list[list[float]]) -> None:
+    path = save(apply(queue, "insert", f"obj:{name}", _docked(model, back, dock)))
+    assert _saved_objects(path)[name]["dock"] == dock
+    reopened = open_site(path)
+    assert name in reopened.world.levels["0"].zone_ref_names()
+    assert _dock_in_level(reopened, name) == _posed(20.0, back, FACING_NORTH, dock)
+
+
+def test_insert_refuses_a_dock_of_fewer_than_three_points(queue: Site) -> None:
+    _, model, back, dock = CHARGER
+    with pytest.raises(ValueError, match="at least 3 points"):
+        apply(queue, "insert", "obj:charger_1", _docked(model, back, dock[:2]))
+
+
+@pytest.mark.parametrize(("name", "model", "back", "dock"), DOCKED, ids=DOCKED_IDS)
+def test_a_moved_object_takes_its_dock_along_in_its_own_frame(queue: Site, name: str, model: str, back: float, dock: list[list[float]]) -> None:
+    inserted = apply(queue, "insert", f"obj:{name}", _docked(model, back, dock))
+    # to the east wall, the front turned into the room again
+    path = save(apply(inserted, "move", f"obj:{name}", {"x": 25.0 - back, "y": 5.0, "yaw": 3.1416}))
+    assert _saved_objects(path)[name]["dock"] == dock
+    assert _dock_in_level(open_site(path), name) == _posed(25.0 - back, 5.0, 3.1416, dock)
+
+
+def test_a_locker_moved_without_its_demand_keeps_its_dock(queue: Site) -> None:
+    name, model, back, dock = LOCKER
+    inserted = apply(queue, "insert", f"obj:{name}", {**_docked(model, back, dock), "type": "parcel_locker", "capacity": 1, "dwell": 30.0})
+    moved = apply(inserted, "move", f"obj:{name}", {"x": 22.0, "leave_demand": True})
+    assert _dock_in_level(moved, name) == _posed(22.0, back, FACING_NORTH, dock)
+    assert _dock_in_level(moved, f"{name}_demand") is None  # robots dock at the model, people queue at the old spot
+
+
+@pytest.mark.parametrize(("name", "model", "back", "dock"), DOCKED, ids=DOCKED_IDS)
+def test_a_removed_object_takes_its_dock_along(queue: Site, name: str, model: str, back: float, dock: list[list[float]]) -> None:
+    inserted = apply(queue, "insert", f"obj:{name}", _docked(model, back, dock))
+    path = save(apply(inserted, "remove", f"obj:{name}"))
+    assert name not in _saved_objects(path)
+    assert name not in open_site(path).world.levels["0"].zone_ref_names()

@@ -465,7 +465,7 @@ process for the whole runtime, started by `sim.launch.py` through
 selecting the sim without it fails with the install hint. The server owns
 `/clock`, steps one world that holds every env at its realizer offset, as
 Gazebo and Isaac do, and publishes each robot's
-`map -> odom`, `odom -> base`, Odometry, zero joint states and sensor
+`map -> odom`, `odom -> base`, Odometry, zero joint states for the base joints and sensor
 messages. Its interface is documented in the flatsim README, the notes here
 are what Arena sends it.
 
@@ -482,8 +482,11 @@ are what Arena sends it.
   mechanism moves every door on every tick.
 - Geometry: wall segments and obstacle footprints are static outlines, sent in
   one call per spawn. Doors are boxes behind the four mechanism primitives,
-  pedestrians are discs fed by `pedestrian_update`. Stairs steps and treads are
-  boxes like any other, so a planar robot cannot climb them.
+  pedestrians are discs fed by `pedestrian_update`, each of the pedestrian's own
+  `radius` (`PED_RADIUS` while unknown, kept by updates without one); the server
+  sizes a disc when it first sees it, so a resized disc is removed and added
+  again. Stairs steps and treads are boxes like any other, so a planar robot
+  cannot climb them.
 - Levels: floors define level slabs. A robot collides and casts rays only
   against the level containing its z. The shipped multi-level worlds lay their
   levels side by side in xy at one z, so an elevator ride there is an xy
@@ -496,9 +499,14 @@ are what Arena sends it.
   gain, a first-order `lag`, a `traction` cap on planar acceleration, the
   `pivot` x the body turns about and the command `timeout`. A diff drive has
   lateral bounds `[0, 0]`. A robot without the block is unbounded and moves
-  sideways only when `is_holonomic`. No controller_manager runs. The adapter
+  sideways only when `is_holonomic`. The base controller does not run. The adapter
   launches `robot_state_publisher`, the server gets the URDF and the tf topic
   of the env.
+- Arm, torso and gripper joints: a ros2_control robot with controllers besides its
+  base controller and `joint_state_broadcaster` gets a `controller_manager` on `mock_components/GenericSystem`
+  (`mock_arm_hardware` in [_urdf.py](_urdf.py)), which keeps only the position-commanded
+  and mimic joints, so those joints track their commands kinematically and the same
+  `control.yaml` controllers load. The server leaves these joints out of its joint states.
 - Odometry: the pose is the exact body pose. The twist is the wheel reading,
   the body twist divided by the gain and taken at the pivot, so it tracks the
   command like a wheel-odometry twist does while the IMU reports the body rate.

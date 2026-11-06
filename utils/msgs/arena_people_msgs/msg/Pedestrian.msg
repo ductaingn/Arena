@@ -9,6 +9,9 @@ uint32 id
 geometry_msgs/Pose pose
 geometry_msgs/Twist twist
 
+# Collision radius in m, 0 = unknown.
+float32 radius
+
 # Animation/behavior states (integrated)
 uint8 IDLE = 0
 uint8 WALKING = 1  

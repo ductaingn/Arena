@@ -61,7 +61,13 @@ if typing.TYPE_CHECKING:
 
     from arena_runtime.acoustics import BaseAcousticsSimulator, PedestrianHearing
 
-PED_RADIUS = 0.3
+PED_RADIUS = 0.3  # m, a typical pedestrian, and one whose radius is unknown
+
+
+def ped_radius(radius: float) -> float:
+    """A pedestrian's collision radius in m, PED_RADIUS where its message says 0 (unknown)."""
+    return radius if radius > 0.0 else PED_RADIUS
+
 
 Segment = tuple[tuple[float, float], tuple[float, float]]
 
@@ -221,6 +227,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
             ),
         )
         self._ped_positions_xy: dict[str, tuple[float, float]] = {}
+        self._ped_radii: dict[str, float] = {}
         self._held_seats_listeners: list[typing.Callable[[], None]] = []
         self._incident_callback: typing.Callable[[str], None] | None = None
         self._ped_orientations: dict[str, QuaternionMsg] = {}
@@ -569,11 +576,12 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
 
     def _on_arena_peds(self, msg: Pedestrians) -> None:
         self._ped_positions_xy = {p.name: (p.pose.position.x, p.pose.position.y) for p in msg.pedestrians}
+        self._ped_radii = {p.name: ped_radius(p.radius) for p in msg.pedestrians}
         self._ped_orientations = {p.name: p.pose.orientation for p in msg.pedestrians}
         self._ped_clips = {p.name: frozenset(g.clip for g in p.gestures) for p in msg.pedestrians}
 
     def pedestrian_discs(self) -> Iterable[tuple[str, tuple[float, float], float]]:
-        return [(name, xy, PED_RADIUS) for name, xy in self._ped_positions_xy.items()]
+        return [(name, xy, self._ped_radii.get(name, PED_RADIUS)) for name, xy in self._ped_positions_xy.items()]
 
     def pedestrian_clips(self) -> Mapping[str, frozenset[str]]:
         """Gesture clips each tracked pedestrian is playing, under the name it is published with."""
@@ -603,8 +611,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
 
     def authored_name(self, realized: str) -> str:
         """Strip the env prefix and a trailing `/<level_id>` from a realized entity name."""
-        prefix = self._realizer.prefix()
-        name = realized[len(prefix) + 1 :] if prefix and realized.startswith(f"{prefix}/") else realized
+        name = self._realizer.unprefix(realized)
         head, sep, tail = name.rpartition("/")
         if sep and head and tail in self._realizer._level_origins:
             return head

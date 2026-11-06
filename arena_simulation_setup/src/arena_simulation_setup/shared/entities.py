@@ -226,6 +226,15 @@ def _dock(value: object) -> Dock:
     return points
 
 
+def _charges_in_the_dock(obstacle: Obstacle, _attribute: attrs.Attribute, value: float | None) -> None:
+    if value is None:
+        return
+    if value <= 0.0:
+        raise ValueError(f'charge_power_w is the power in W a robot in the dock charges with, above 0, got {value!r}')
+    if obstacle.dock is None:
+        raise ValueError(f'charge_power_w charges a robot standing in the dock, but {obstacle.name!r} has no dock')
+
+
 @attrs.define
 class Obstacle(Entity):
     scale: Scale | None = None
@@ -233,6 +242,7 @@ class Obstacle(Entity):
     humansim: dict = attrs.field(factory=dict, converter=_humansim_object)
     joints: Joints = attrs.field(default=None, converter=_joints)
     dock: Dock = attrs.field(default=None, converter=_dock)
+    charge_power_w: float | None = attrs.field(default=None, validator=_charges_in_the_dock)
 
     def dock_polygon(self) -> list[Position] | None:
         """The dock in the frame of the object's pose, None without one."""

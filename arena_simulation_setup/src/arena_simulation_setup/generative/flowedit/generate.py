@@ -13,10 +13,11 @@ from typing import TYPE_CHECKING, Any
 import attrs
 
 from arena_simulation_setup.kg.scene import kind_of
+from arena_simulation_setup.utils.face import front_angle as annotated_front
 from arena_simulation_setup.utils.geometry import Position
 
 from .build import presets, zones_at
-from .edit import EditType, LayoutOp, Site, apply
+from .edit import Edit, EditType, LayoutOp, Site, apply, world_object
 
 if TYPE_CHECKING:
     import shapely
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from arena_simulation_setup.shared.world import Door, Schedule
     from arena_simulation_setup.tree.World.model import Level, Zone
 
-GENERATOR_VERSION = 4
+GENERATOR_VERSION = 5
 MANIFEST_FORMAT = "flowedit-generated/1"
 MAX_TRIES = 50
 #: Function fields the generator samples. The reader writes `dwell` into the `duration` of the step at the object; `satisfies` is not drawn yet.
@@ -194,32 +195,9 @@ def footprint(root: Path, model: str, x: float, y: float, yaw: float) -> shapely
     return shapely.affinity.translate(shapely.affinity.rotate(local, yaw, origin=(0, 0), use_radians=True), xoff=x, yoff=y)
 
 
-def face_front(face: object) -> float | None:
-    """The angle in rad, in the model's frame, of an annotated `face` (an arena_assets `Face` value or a legacy angle),
-    None when it names no face. The same rule as the runtime's `front_angle` (arena_runtime `humans/support.py`), which
-    turns a world object so people queue at that front."""
-    from arena_assets.impl import Face
-
-    def front(f: Face) -> float:
-        return math.remainder(math.radians(f.angle + 180.0), math.tau)
-
-    if isinstance(face, str):
-        try:
-            return front(Face(face))
-        except ValueError:
-            try:
-                face = float(face)
-            except ValueError:
-                return None
-    if isinstance(face, (int, float)) and not isinstance(face, bool):
-        return next((front(f) for f in Face if f.angle == float(face)), None)
-    return None
-
-
 def front_angle(root: Path, model: str) -> float:
-    """The angle, in `model`'s own frame, of the side people queue at and use it from, once resolved (`resolve_footprints`):
-    its annotated front, else pi. The runtime keeps the yaw of an object without a known `face` and queues behind it."""
-    front = face_front(_FACES.get((root, model)))
+    """The angle in `model`'s frame of the side people queue at, once resolved (`resolve_footprints`): its annotated front, else pi, behind the yaw as HumanSim queues an object without a known `face`."""
+    front = annotated_front(_FACES.get((root, model)))
     return math.pi if front is None else front
 
 
@@ -490,8 +468,15 @@ def _clone_demand(site: Site, obj: str) -> dict[str, Any]:
     return out
 
 
+def _clone_dock(site: Site, obj: str) -> dict[str, Any]:
+    """The `dock` param that gives a new object the dock of `obj`, none for an object without one in `world.yaml`."""
+    found = world_object(site.world, obj.partition(":")[2])
+    dock = None if found is None else found[0].objects[found[1]].dock
+    return {} if dock is None else {"dock": [[p.x, p.y] for p in dock]}
+
+
 def _insert(site: Site, rng: random.Random, wide: bool = False) -> Sampled:
-    """Insert a copy of an object on the floor, one with demand first, its demand copied, in a room of its level (`room`)."""
+    """Insert a copy of an object on the floor, one with demand first, its demand and dock copied, in a room of its level (`room`)."""
     modelled = floor_objects(site)
     source = _prefer(rng, [obj for obj in demand_objects(site) if obj in modelled], modelled, wide)
     placed = _at(site, source)
@@ -508,7 +493,7 @@ def _insert(site: Site, rng: random.Random, wide: bool = False) -> Sampled:
     spot = spots.in_zone(rng, model, rng.choice(zones))
     if spot is None:
         raise Redraw("no valid spot")
-    return Sampled(EditType.INSERT, name, {"model": model, "x": spot[0], "y": spot[1], "yaw": spot[2], "level": level_id, **_clone_demand(site, source)}, Scope.ROOM.value)
+    return Sampled(EditType.INSERT, name, {"model": model, "x": spot[0], "y": spot[1], "yaw": spot[2], "level": level_id, **_clone_demand(site, source), **_clone_dock(site, source)}, Scope.ROOM.value)
 
 
 def _door_rooms(site: Site) -> dict[str, set[str]]:
@@ -763,9 +748,16 @@ class Control(enum.StrEnum):
     MOVED_WITHOUT_DEMAND = "moved_without_demand"
 
 
+def own_edits(site: Site, chain: Site) -> list[Edit]:
+    """The edits `chain` adds to `site`, its base; ValueError when `site` is not its base."""
+    if chain.edits[: len(site.edits)] != site.edits:
+        raise ValueError(f"{site.name} is not the base of {chain.name}")
+    return chain.edits[len(site.edits) :]
+
+
 def controls(site: Site, chain: Generated) -> list[tuple[Control, Site]]:
     """The geometry-only controls of a chain's first edit when it carries function, applied to `site`, the chain's base."""
-    first = chain.site.edits[0]
+    first = own_edits(site, chain.site)[0]
     if not chain.records[0]["function_carrying"] or first.type not in (EditType.MOVE, EditType.INSERT):
         return []
     if first.type is EditType.MOVE:
@@ -775,13 +767,13 @@ def controls(site: Site, chain: Generated) -> list[tuple[Control, Site]]:
             return []
         level_id, pose = placed
         spot = {k: first.params.get(k, pose[k]) for k in ("x", "y", "yaw")}
-        inert = {"model": model, **spot, "level": str(first.params.get("level", level_id))}
+        inert = {"model": model, **spot, "level": str(first.params.get("level", level_id)), **_clone_dock(site, first.target)}
         moved = {**{k: v for k, v in first.params.items() if k in ("x", "y", "yaw", "level")}, "leave_demand": True}
         return [
             (Control.INERT_OBJECT, apply(site, EditType.INSERT, f"{first.target}{INERT_SUFFIX}", inert)),
             (Control.MOVED_WITHOUT_DEMAND, apply(site, EditType.MOVE, first.target, moved)),
         ]
-    keep = ("model", "x", "y", "yaw", "level")
+    keep = ("model", "x", "y", "yaw", "level", "dock")
     return [(Control.INERT_OBJECT, apply(site, EditType.INSERT, f"{first.target}{INERT_SUFFIX}", {k: v for k, v in first.params.items() if k in keep}))]
 
 
@@ -794,6 +786,6 @@ def dump_manifest(site: Site, chains: Sequence[Generated], seed: int, per_type: 
             entry["path"] = str(worlds[chain.site.name])
         made = (chain_controls or {}).get(chain.site.name) or []
         if made:
-            entry["controls"] = [{"kind": kind.value, "world": control.name, "ids": [e.id for e in control.edits], **({"path": str(worlds[control.name])} if worlds is not None and control.name in worlds else {})} for kind, control in made]
+            entry["controls"] = [{"kind": kind.value, "world": control.name, "ids": [e.id for e in own_edits(site, control)], **({"path": str(worlds[control.name])} if worlds is not None and control.name in worlds else {})} for kind, control in made]
         entries.append(entry)
     return {"format": MANIFEST_FORMAT, "generator_version": GENERATOR_VERSION, "base": site.name, "scenario": site.scenario, "seed": seed, "per_type": per_type, "steps": steps, "fields": list(FIELDS), "chains": entries}

@@ -53,6 +53,7 @@ from arena_runtime.env.interactive.entities import EntityHandles
 from arena_runtime.env.node import _LATCHED, EnvNode, _available
 from arena_runtime.env.phase_clock import PhaseClock
 from arena_runtime.env.placement import random_obstacle_pose, random_robot_pose
+from arena_runtime.env.robot_manager.charging import Chargers
 from arena_runtime.env.robot_manager.robot_manager import footprint_radius
 from arena_runtime.env.run_task import RunningTask
 from arena_runtime.env.task_layer import (
@@ -662,7 +663,9 @@ class EpisodeNode(EnvNode):
                 await self._reset_episode(record, clock)
             finally:
                 compacted = self._world_manager.world_compacted()
-                self._judge_zones = zone_polygons(authored_statics(compacted))
+                statics = authored_statics(compacted)
+                self._judge_zones = zone_polygons(statics)
+                self._chargers = Chargers({entity.name: entity.charge_power_w for entity in statics.objects if entity.charge_power_w is not None})
                 self._judge_walls = self._wall_grid(compacted)
                 for manager in self._robots_manager.managers.values():
                     manager.set_episode_conditions(self._episode_conditions)
@@ -842,6 +845,9 @@ class EpisodeNode(EnvNode):
                     ),
                     return_exceptions=True,
                 )
+                robot_conf = self.conf.Robot
+                for manager in self._robots_manager.managers.values():
+                    manager.publish_soc(manager.initial_soc(self.conf.General.RNG, robot_conf.BATTERY_SOC_MIN.value, robot_conf.BATTERY_SOC_MAX.value))
                 clock.lap("robot_reset")
                 reasons: list[str] = []
                 for name, outcome in zip(self._robots_manager.managers, robot_outcomes, strict=True):

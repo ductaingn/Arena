@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import math
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EditType, Site, dump_edits, open_site, save
+import yaml
+from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EditType, Site, dump_edits, open_site, save, world_object
 from arena_simulation_setup.generative.flowedit.generate import CAPACITY, DEFAULT_DWELL_S, DWELL_S, FIELDS, FLOOR_HEIGHT_M, Generated, dump_manifest, floor_objects, generate
+from flowedit_docks import FACING_NORTH, LOCKER
 
 if TYPE_CHECKING:
     from arena_simulation_setup.generative.flowedit.generate import WallPiece
     from arena_simulation_setup.tree.World.model import Zone
+    from arena_simulation_setup.utils.geometry import Position
 
 pytest.importorskip("numpy")
 pytestmark = pytest.mark.usefixtures("local_root")
@@ -378,6 +382,49 @@ def test_a_function_carrying_insert_gets_only_the_inert_copy(queue: Site) -> Non
     raise AssertionError("no function-carrying insert in 20 seeds")
 
 
+@pytest.fixture(scope="module")
+def edited(queue: Site) -> Site:
+    """The queue site after a geometry-only move of the reception counter: an edited world to generate on."""
+    from arena_simulation_setup.generative.flowedit.edit import apply
+
+    return apply(queue, "move", "obj:reception_counter_1", {"x": 3.0})
+
+
+def test_controls_on_an_edited_world_follow_each_chains_own_first_edit(edited: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import Control, controls
+
+    chains = generate(edited, seed=0, types=[EditType.MOVE, EditType.INSERT])
+    assert [c.records[0]["function_carrying"] for c in chains] == [True, True]
+    for chain in chains:
+        first = next(e for e in chain.site.edits if e.id == chain.records[0]["id"])
+        made = controls(edited, chain)
+        assert made
+        for kind, control in made:
+            (edit,) = control.edits[len(edited.edits) :]
+            assert edit.target == (first.target if kind is Control.MOVED_WITHOUT_DEMAND else f"{first.target}_inert")
+            assert (edit.params["x"], edit.params["y"]) == (first.params["x"], first.params["y"])
+
+
+def test_the_manifest_lists_only_a_controls_own_edits_on_an_edited_world(edited: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import controls
+
+    chains = generate(edited, seed=0, types=[EditType.MOVE])
+    made = {chain.site.name: controls(edited, chain) for chain in chains}
+    manifest = dump_manifest(edited, chains, 0, 1, 1, chain_controls=made)
+    listed = [(c["world"], c["ids"]) for entry in manifest["chains"] for c in entry["controls"]]
+    assert listed and listed == [(control.name, [control.edits[-1].id]) for chain in chains for _, control in made[chain.site.name]]
+
+
+def test_controls_refuse_a_site_that_is_not_the_chains_base(queue: Site, edited: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.edit import apply
+    from arena_simulation_setup.generative.flowedit.generate import controls
+
+    chain = generate(edited, seed=0, types=[EditType.MOVE])[0]
+    other = apply(queue, "move", "obj:fountain", {"x": 15.0, "y": 11.5})
+    with pytest.raises(ValueError, match="is not the base of"):
+        controls(other, chain)
+
+
 def test_controls_are_saved_and_listed_in_the_manifest(queue: Site) -> None:
     from arena_simulation_setup.generative.flowedit.generate import controls
     from arena_simulation_setup.tree.World import WorldIdentifier
@@ -416,24 +463,45 @@ def test_raised_objects_are_neither_moved_nor_copied() -> None:
     assert moved and not moved & raised
 
 
-@pytest.mark.parametrize(
-    ("face", "angle"),
-    [("+x", 0.0), ("+y", math.pi / 2), ("-x", math.pi), ("-y", -math.pi / 2), ("xy", math.pi / 4), ("90", -math.pi / 2), (-180, 0.0)],
-)
-def test_a_face_turns_to_the_front_the_runtime_queues_at(face: str | int, angle: float) -> None:
-    from arena_simulation_setup.generative.flowedit.generate import face_front
-
-    front = face_front(face)
-    assert front is not None
-    assert math.cos(front) == pytest.approx(math.cos(angle), abs=1e-9)
-    assert math.sin(front) == pytest.approx(math.sin(angle), abs=1e-9)
-
-
 def test_without_a_known_face_people_queue_behind_the_yaw(queue: Site, monkeypatch: pytest.MonkeyPatch) -> None:
     from arena_simulation_setup.generative.flowedit import generate
 
-    assert generate.face_front("up") is None
     monkeypatch.setitem(generate._FACES, (queue.root, "Some/Model"), None)
     monkeypatch.setitem(generate._FACES, (queue.root, "Odd/Model"), "up")
     assert generate.front_angle(queue.root, "Some/Model") == pytest.approx(math.pi)
     assert generate.front_angle(queue.root, "Odd/Model") == pytest.approx(math.pi)
+
+
+@pytest.fixture
+def docked_locker(tmp_path: Path) -> Site:
+    """hospital_1 without scenario plus a docked parcel locker against a wall, its only object with a need."""
+    root = tmp_path / "worlds" / "hospital_docked"
+    shutil.copytree(HOSPITAL, root, ignore=shutil.ignore_patterns("scenarios"))
+    world = yaml.safe_load((root / "world.yaml").read_text())
+    humansim = {"type": "parcel_locker", "capacity": 1, "satisfies": {"parcel": 50.0}}
+    world["levels"][0]["objects"].append({"name": LOCKER.name, "model": LOCKER.model, "pose": [20.0, LOCKER.back, FACING_NORTH], "dock": LOCKER.dock, "humansim": humansim})
+    (root / "world.yaml").write_text(yaml.safe_dump(world, sort_keys=False))
+    return open_site(root)
+
+
+def _dock(site: Site, obj: str) -> list[Position] | None:
+    found = world_object(site.world, obj.partition(":")[2])
+    assert found is not None, obj
+    level, i = found
+    return level.objects[i].dock
+
+
+def test_insert_copies_an_objects_dock(docked_locker: Site) -> None:
+    (chain,) = generate(docked_locker, seed=0, types=[EditType.INSERT])
+    edit = chain.site.edits[-1]
+    assert edit.params["model"] == "parcel_locker" and edit.params["dock"] == LOCKER.dock
+    assert _dock(chain.site, edit.target) == _dock(docked_locker, f"obj:{LOCKER.name}")
+
+
+@pytest.mark.parametrize("kind", [EditType.MOVE, EditType.INSERT])
+def test_the_inert_copy_keeps_the_dock(docked_locker: Site, kind: EditType) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import Control, controls
+
+    (chain,) = generate(docked_locker, seed=0, types=[kind])
+    inert = dict(controls(docked_locker, chain))[Control.INERT_OBJECT]
+    assert _dock(inert, f"{chain.site.edits[0].target}_inert") == _dock(docked_locker, f"obj:{LOCKER.name}")
