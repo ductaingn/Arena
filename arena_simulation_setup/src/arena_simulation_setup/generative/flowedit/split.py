@@ -32,7 +32,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,6 +47,18 @@ SOURCE_KEYS = ("scenario", "seed", "per_type", "steps", "controls")
 def base_of(world: str) -> str:
     """The base world of an edited world's name (`<base>__<edit id>`), or the name itself."""
     return world.partition("__")[0]
+
+
+def is_base(world: str) -> bool:
+    """Whether `world` is a base world, not an edit of one: a base world runs its source's scenario, an edited world names its own."""
+    return base_of(world) == world
+
+
+def duration_of(doc: Mapping[str, Any]) -> float:
+    """Sim seconds every run of the split lasts: its `duration`, else the default of `flowedit run`."""
+    from .run import DURATION_S
+
+    return float(doc.get("duration", DURATION_S))
 
 
 def crowd(doc: Mapping[str, Any], over: Path | None = None) -> dict[str, Any]:
@@ -154,7 +166,7 @@ class Job:
 
     def argv(self, scenario: str | None, out: Path, duration: float, settings: Path | None) -> list[str]:
         """`flowedit run` of this job: an edited world names its own scenario, a base world the source's."""
-        args = ["run", self.world, *([scenario] if scenario and "__" not in self.world else []), "--seed", str(self.seed), "--duration", str(duration), "--out", str(out)]
+        args = ["run", self.world, *([scenario] if scenario and is_base(self.world) else []), "--seed", str(self.seed), "--duration", str(duration), "--out", str(out)]
         return [*args, *(["--settings", str(settings)] if settings is not None else [])]
 
 
@@ -213,6 +225,16 @@ def _flowedit(args: Sequence[str]) -> list[str]:
     return [sys.executable, "-m", "arena_simulation_setup.generative.flowedit.cli", *args]
 
 
+def regenerate_worlds(doc: Mapping[str, Any], manifests: Path, log: Callable[[str], None] = print) -> None:
+    """Make the split's edited worlds again with `flowedit generate`, manifests under `manifests`, and check every listed name came out."""
+    manifests.mkdir(parents=True, exist_ok=True)
+    for base, source in doc["sources"].items():
+        log(f"generating the edited worlds of {base}")
+        manifest = manifests / f"{base}.manifest.yaml"
+        subprocess.run(_flowedit(generate_argv(base, source, manifest)), check=True, stdout=subprocess.DEVNULL)
+        verify(doc, base, yaml.safe_load(manifest.read_text()) or {})
+
+
 def sweep(
     doc: Mapping[str, Any],
     out: Path,
@@ -223,7 +245,7 @@ def sweep(
     domain_base: int = 150,
     regenerate: bool = True,
     stagger: float = 30.0,
-    log=print,  # noqa: ANN001 - a print-like callable
+    log: Callable[[str], None] = print,
 ) -> dict[str, int]:
     """Record every run of the chosen partitions under `out`, `jobs_at_once` launches at a time, each on its own ROS domain.
 
@@ -233,11 +255,7 @@ def sweep(
     logs = out / "_sweep"
     logs.mkdir(parents=True, exist_ok=True)
     if regenerate:
-        for base, source in doc["sources"].items():
-            log(f"generating the edited worlds of {base}")
-            manifest = logs / f"{base}.manifest.yaml"
-            subprocess.run(_flowedit(generate_argv(base, source, manifest)), check=True, stdout=subprocess.DEVNULL)
-            verify(doc, base, yaml.safe_load(manifest.read_text()) or {})
+        regenerate_worlds(doc, logs, log)
     from . import settings as S
     from .run import done, scenario_name
 
@@ -246,7 +264,7 @@ def sweep(
         # one file holding the merged settings, so every run reads exactly what the skip check below names its run by
         settings = logs / f"settings_{S.digest(settings_doc)}.yaml"
         settings.write_text(yaml.safe_dump(settings_doc, sort_keys=True))
-    duration = float(doc.get("duration", 300.0))
+    duration = duration_of(doc)
     counts = {"done": 0, "skipped": 0, "failed": 0}
     queue = []
     for job in jobs(doc, partitions):
@@ -281,4 +299,4 @@ def sweep(
     return counts
 
 
-__all__ = ["PARTITIONS", "SPLIT_FORMAT", "Job", "base_of", "check", "crowd", "generate_argv", "jobs", "load", "seeds_of", "sweep", "verify"]
+__all__ = ["PARTITIONS", "SPLIT_FORMAT", "Job", "base_of", "check", "crowd", "duration_of", "generate_argv", "is_base", "jobs", "load", "regenerate_worlds", "seeds_of", "sweep", "verify"]

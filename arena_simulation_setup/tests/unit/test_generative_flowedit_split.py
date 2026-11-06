@@ -170,6 +170,16 @@ def test_every_world_runs_once_per_seed(doc: dict[str, Any]) -> None:
     assert SP.generate_argv("hospital_1", doc["sources"]["hospital_1"]) == ["generate", "hospital_1", "--scenario", "queue", "--seed", "0", "--per-type", "2", "--steps", "1", "--write"]
 
 
+def test_a_base_world_is_one_whose_name_holds_no_edit() -> None:
+    assert SP.is_base("hospital_1") and SP.is_base("office_1")
+    assert not SP.is_base("hospital_1__move_fountain__6e1d6873")
+
+
+def test_runs_last_the_splits_duration_else_the_run_default(doc: dict[str, Any]) -> None:
+    assert SP.duration_of(doc) == 5.0
+    assert SP.duration_of({k: v for k, v in doc.items() if k != "duration"}) == R.DURATION_S
+
+
 def test_a_sweep_runs_every_job_and_counts_how_each_ended(doc: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # a stand-in `flowedit`: office_1 fails, hospital_1__bb is already recorded, every launch prints its ROS domain
     script = "import os, sys; a = sys.argv[1:]; print('domain', os.environ['ROS_DOMAIN_ID']); w = a[1]; print('already recorded' if w == 'hospital_1__bb' else ''); sys.exit(3 if w == 'office_1' else 0)"

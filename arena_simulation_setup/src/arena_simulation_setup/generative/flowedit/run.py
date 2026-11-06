@@ -27,7 +27,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,12 +35,14 @@ from typing import Any
 
 from arena_simulation_setup.tree.World.write import to_yaml
 
+from ..scenario.cli import _writable, world_root
 from . import settings as S
 from .edit import EDITS, EditType, Site, apply, dump_edits, open_site, save
 from .read import read
 from .read import write as write_scenario
 
 RUNS = "flowedit_runs"
+DURATION_S = 300.0  # sim seconds a run records unless told otherwise
 RUN_FORMAT = "flowedit-run/1"
 RUN_FILE = "run.yaml"
 TRACKS = "tracks.parquet"
@@ -79,6 +81,30 @@ class Prepared:
 def scenario_name(scenario: str | None, settings: Mapping[str, Any], seed: int) -> str:
     """The generated scenario's name: one per settings and seed, so runs under other settings never overwrite it."""
     return f"flowedit_{scenario or 'world'}_{S.digest(settings)[:8]}_s{seed}"
+
+
+def base_site(worlds: Path | None, site: Site) -> Site:
+    """The unedited world `site` was edited from, the people's source: under `worlds` when it is there, else wherever the name resolves."""
+    if not site.edits:
+        return site
+    try:
+        base_root = world_root(worlds, site.base)
+    except FileNotFoundError:
+        base_root = world_root(None, site.base)
+    return open_site(base_root, site.scenario, site.seed, [])
+
+
+def check_writable(worlds: Path | None, world: str, root: Path) -> None:
+    """Refuse a world a scenario must not be written into."""
+    if not (root / EDITS).is_file():
+        # a shipped world is written in the source tree only
+        _writable(world_root(worlds, world, write=True))
+    elif worlds is None:
+        from arena_simulation_setup.tree.World import WorldIdentifier
+
+        # an edited world is written where `flowedit edit` saved it, the local worlds root, not a pulled copy
+        if WorldIdentifier(root.name).resolve_write_sync().path.resolve() != root.resolve():
+            raise ValueError(f"{root} is not where `flowedit edit` saves {root.name}, so it is not written")
 
 
 def prepare(site: Site, base: Site, edits: Sequence[Edit], settings: Mapping[str, Any], seed: int, notes: list[str] | None = None, *, dry_run: bool = False) -> Prepared:
@@ -249,9 +275,7 @@ def names_at(time: Any, agent_id: Any, names: Names) -> Any:  # noqa: ANN401 - n
     if not snapshots:
         return np.full(len(ids), "", dtype=object)
     snap_t = np.array([s for s, _ in snapshots], dtype=float)
-    table = pd.DataFrame(
-        [(k, s, int(i), str(n)) for k, (s, snap) in enumerate(snapshots) for i, n in snap.items()], columns=["k", "t", "agent_id", "name"]
-    ).drop_duplicates(["k", "agent_id"], keep="last")
+    table = pd.DataFrame([(k, s, int(i), str(n)) for k, (s, snap) in enumerate(snapshots) for i, n in snap.items()], columns=["k", "t", "agent_id", "name"]).drop_duplicates(["k", "agent_id"], keep="last")
     k = np.searchsorted(snap_t, t, side="right") - 1
     rows = pd.DataFrame({"k": k, "agent_id": ids}).merge(table.drop(columns="t"), on=["k", "agent_id"], how="left")
     unnamed = np.flatnonzero(rows["name"].isna().to_numpy())
@@ -429,7 +453,7 @@ def record(
     startup_timeout: float = 300.0,
     grace: float = 60.0,
     margin: float = 30.0,
-    log=print,  # noqa: ANN001 - a print-like callable
+    log: Callable[[str], None] = print,
 ) -> Path:
     """Launch the prepared scenario headless with HumanSim recording, stop it after `duration` seconds of frames, and write the run directory.
 
@@ -520,4 +544,4 @@ def default_out() -> Path:
     return Path(data) / RUNS
 
 
-__all__ = ["EDITS", "INTERACTIONS", "RUNS", "Edit", "Extracted", "Prepared", "default_out", "done", "extract", "interaction_rows", "keyed", "launch_command", "names_at", "prepare", "provenance", "record", "scenario_name", "summary", "tracks", "uses"]
+__all__ = ["DURATION_S", "EDITS", "INTERACTIONS", "RUNS", "Edit", "Extracted", "Prepared", "base_site", "check_writable", "default_out", "done", "extract", "interaction_rows", "keyed", "launch_command", "names_at", "prepare", "provenance", "record", "scenario_name", "summary", "tracks", "uses"]
