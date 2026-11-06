@@ -16,7 +16,7 @@ from arena_runtime.env.constants.rng import EpisodeRng
 from arena_runtime.env.realizer import Realizer
 from arena_runtime.humans.arena_humansim.agent import ArenaHumanDynamicObstacle
 from arena_runtime.humans.arena_humansim.arena_humansim import ArenaHumanSimulator
-from arena_runtime.humans.arena_humansim.rng_keys import flow_model_key, seats_key, stable_name, walker_key
+from arena_runtime.humans.arena_humansim.rng_keys import AgentSource, flow_model_key, seats_key, walker_key
 from arena_runtime.shared import Orientation, Pose, Position
 
 # a sofa whose third sit slot faces one of two yaws, drawn from the object's seats stream
@@ -36,12 +36,17 @@ def _rng(seed: int) -> EpisodeRng:
     return rng
 
 
+def _realizer(prefix: str) -> Realizer:
+    return Realizer(Realizer._Configuration(x=0.0, y=0.0, prefix=prefix))
+
+
 def _walker(seed: int, sim_path: str, prefix: str, before: tuple[str, ...] = ()) -> tuple[float, ...]:
     rng = _rng(seed)
+    realizer = _realizer(prefix)
     for other in before:
         # another person's draw first: a spawn order that differs between runs
-        ArenaHumanDynamicObstacle(agent_type="adult").sample_params(rng.stream(*walker_key(other, prefix)))
-    params = ArenaHumanDynamicObstacle(agent_type="adult").sample_params(rng.stream(*walker_key(sim_path, prefix)))
+        ArenaHumanDynamicObstacle(agent_type="adult").sample_params(rng.stream(*walker_key(realizer.unprefix(other))))
+    params = ArenaHumanDynamicObstacle(agent_type="adult").sample_params(rng.stream(*walker_key(realizer.unprefix(sim_path))))
     assert params is not None
     return (params.desired_velocity, params.agent_radius, params.perception.vision_range, params.perception.vision_fov, *sorted(params.local_planner_params.values()), params.handedness)
 
@@ -49,7 +54,7 @@ def _walker(seed: int, sim_path: str, prefix: str, before: tuple[str, ...] = ())
 def _adapter(seed: int, prefix: str) -> ArenaHumanSimulator:
     adapter = object.__new__(ArenaHumanSimulator)
     adapter._NodeInterface__node = types.SimpleNamespace(conf=types.SimpleNamespace(General=types.SimpleNamespace(RNG=_rng(seed))))  # NodeInterface keeps it private
-    adapter._realizer = Realizer(Realizer._Configuration(x=0.0, y=0.0, prefix=prefix))
+    adapter._realizer = _realizer(prefix)
     return adapter
 
 
@@ -59,12 +64,16 @@ def _seat_yaws(seed: int, prefix: str) -> list[float]:
     return [round(p.theta, 9) for p in poses]
 
 
-def test_stable_name_drops_only_the_own_env_prefix() -> None:
-    assert stable_name("env_1/flow_3", "env_1") == "flow_3"
-    assert stable_name("/env_12/sofa/L1", "env_12") == "sofa/L1"
-    assert stable_name("env_12/sofa", "env_1") == "env_12/sofa"
-    assert stable_name("flow_3", "") == "flow_3"
-    assert walker_key("env_1/flow_3", "env_1") == walker_key("env_2/flow_3", "env_2") != seats_key("env_1/flow_3", "env_1")
+def test_unprefix_drops_only_the_own_env_prefix() -> None:
+    assert _realizer("env_1").unprefix("env_1/flow_3") == "flow_3"
+    assert _realizer("env_12").unprefix("/env_12/sofa/L1") == "sofa/L1"
+    assert _realizer("env_1").unprefix("env_12/sofa") == "env_12/sofa"
+    assert _realizer("").unprefix("flow_3/") == "flow_3"
+    assert _realizer("env_1").unprefix(_realizer("env_1").prefix("flow_3")) == "flow_3"
+
+
+def test_walker_and_seat_keys_name_the_person_not_the_env() -> None:
+    assert walker_key(_realizer("env_1").unprefix("env_1/flow_3")) == walker_key(_realizer("env_2").unprefix("env_2/flow_3")) != seats_key("flow_3")
 
 
 def test_a_person_draws_the_same_walker_in_any_env_with_the_same_seed() -> None:
@@ -86,11 +95,11 @@ def test_seats_follow_the_seed_not_the_env() -> None:
 
 
 def test_flow_models_are_keyed_on_source_and_release_index() -> None:
-    assert flow_model_key(41, "door_a", 4, "door_a_4") == flow_model_key(57, "door_a", 4, "x") != flow_model_key(41, "door_a", 5)
-    assert flow_model_key(41, name="flow_1") == flow_model_key(9, name="flow_1")
-    assert flow_model_key(41) != flow_model_key(42)
+    assert flow_model_key(41, AgentSource("door_a", 4, "door_a_4")) == flow_model_key(57, AgentSource("door_a", 4, "x")) != flow_model_key(41, AgentSource("door_a", 5))
+    assert flow_model_key(41, AgentSource(name="flow_1")) == flow_model_key(9, AgentSource(name="flow_1"))
+    assert flow_model_key(41, AgentSource()) != flow_model_key(42, AgentSource())
     adapter = _adapter(0, "env_3")
     adapter._agent_meta_callback(AgentMeta(agent_id=[41, 42], name=["env_3/flow_1", ""], handedness=["", ""], agent_type=["", ""], source_name=["", "door_a"], source_seq=[0, 4]))
-    assert adapter._agent_sources == {41: ("", 0, "flow_1"), 42: ("door_a", 4, "")}
+    assert adapter._agent_sources == {41: AgentSource("", 0, "flow_1"), 42: AgentSource("door_a", 4, "")}
     adapter._agent_meta_callback(AgentMeta(agent_id=[1], name=["a"], handedness=[""]))
-    assert adapter._agent_sources == {1: ("", 0, "a")}
+    assert adapter._agent_sources == {1: AgentSource("", 0, "a")}

@@ -125,7 +125,7 @@ from arena_runtime.humans.support import Support, seat_stand
 from arena_runtime.shared import Door, DynamicObstacle, Elevator, Obstacle, Orientation, Pose, Position, Region, Robot, Wall
 
 from .agent import ArenaHumanDynamicObstacle, agent_type_def, agent_type_stimuli, flow_agent_template, path_agent_type_name
-from .rng_keys import flow_model_key, seats_key, stable_name, walker_key
+from .rng_keys import AgentSource, flow_model_key, seats_key, walker_key
 
 _DEFERRED_ID_BASE = 1 << 24
 
@@ -445,8 +445,7 @@ class ArenaHumanSimulator(BaseHumanSimulator):
         self._engine_stamp_ns: int | None = None
         self._agent_gestures: dict[int, list[EngineGestureMsg]] = {}
         self._agent_types: dict[int, str] = {}
-        #: engine agent id -> (source_name, source_seq, engine name without the env prefix), the key of its draws
-        self._agent_sources: dict[int, tuple[str, int, str]] = {}
+        self._agent_sources: dict[int, AgentSource] = {}
         self._agent_type_paths: dict[str, str] = {}
         self._arena_pedestrians: Pedestrians = Pedestrians()
         self._arena_pedestrians.header.frame_id = "map"
@@ -631,8 +630,7 @@ class ArenaHumanSimulator(BaseHumanSimulator):
         sources = msg.source_name if len(msg.source_name) == n else [""] * n
         seqs = msg.source_seq if len(msg.source_seq) == n else [0] * n
         names = msg.name if len(msg.name) == n else [""] * n
-        prefix = self._realizer.get_config().prefix
-        self._agent_sources = {int(i): (str(s), int(q), stable_name(str(m), prefix) if m else "") for i, s, q, m in zip(msg.agent_id, sources, seqs, names, strict=True)}
+        self._agent_sources = {int(i): AgentSource(str(s), int(q), self._realizer.unprefix(str(m))) for i, s, q, m in zip(msg.agent_id, sources, seqs, names, strict=True)}
 
     def _remember_agent_type_path(self, agent_type: str) -> None:
         """File a path-based agent type under the name the engine reports for it."""
@@ -927,7 +925,7 @@ class ArenaHumanSimulator(BaseHumanSimulator):
                 self._warned_untagged_types.add(agent_type)
                 self._logger.warning(f"agent type {agent_type!r} asks for a human model tagged {list(definition.assets)}, no bundle on disk carries them; using {self.FLOW_MODEL!r}")
             return self.FLOW_MODEL
-        rng = self.node.conf.General.RNG.stream(*flow_model_key(agent_id, *self._agent_sources.get(agent_id, ("", 0, ""))))
+        rng = self.node.conf.General.RNG.stream(*flow_model_key(agent_id, self._agent_sources.get(agent_id, AgentSource())))
         return matches[int(rng.integers(len(matches)))]
 
     # The engine runs in the world frame (authored coordinates, levels laid out), this adapter owns the env offset:
@@ -964,7 +962,7 @@ class ArenaHumanSimulator(BaseHumanSimulator):
                 heights = [seat_height(seat, slots) for seat in seats]
                 edges: list[tuple[float, float] | None] = [None if (slot := seat_slot(seat, slots)) is None else (seat_reach(seat, slot), seat_reach(seat, slot, behind=True)) for seat in seats]
             else:
-                rng = self.node.conf.General.RNG.stream(*seats_key(obstacle.sim_path, self._realizer.get_config().prefix))
+                rng = self.node.conf.General.RNG.stream(*seats_key(self._realizer.unprefix(obstacle.sim_path)))
                 seats = [slot.pose(rng) for slot in slots]
                 heights = [slot_height(slot) for slot in slots]
                 edges = [(seat_reach(seat, slot), seat_reach(seat, slot, behind=True)) for seat, slot in zip(seats, slots, strict=True)]
@@ -1394,8 +1392,7 @@ class ArenaHumanSimulator(BaseHumanSimulator):
             agent_msg.velocity = Vector3(x=0.0, y=0.0, z=0.0)
 
             parsed = ArenaHumanDynamicObstacle.from_dynamic_obstacle(obstacle)
-            # keyed on the name inside the env: the same person draws the same walker whatever env index it runs in
-            params = parsed.sample_params(self.node.conf.General.RNG.stream(*walker_key(obstacle.sim_path, self._realizer.get_config().prefix))) if parsed is not None else None
+            params = parsed.sample_params(self.node.conf.General.RNG.stream(*walker_key(self._realizer.unprefix(obstacle.sim_path)))) if parsed is not None else None
 
             if parsed is not None and params is not None:
                 agent_msg.desired_velocity = params.desired_velocity

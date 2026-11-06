@@ -589,11 +589,11 @@ order:
 | a source-released agent's human model | `humansim, flow-model, source, <source_name>, <source_seq>` |
 | the engine's own seed, handed over before each crowd | `humansim, engine` |
 
-`<name in its env>` is the sim path without the env prefix (`env_1/flow_3` is `flow_3`, a level suffix stays). Each
-stream depends only on the seed and its key, so adding or removing one person changes no other person's draws. The
-episode seed itself comes from the episode request (`RunEpisode`, `reset_episode`) when it names one, else from
-`run_seed|world|episode_id` (see [env/README.md](../env/README.md)): runs that must pair, such as a world and its
-edit, pass the same explicit seed.
+`<name in its env>` is the sim path without the env prefix (`Realizer.unprefix`: `env_1/flow_3` is `flow_3`, a
+level suffix stays). Each stream depends only on the seed and its key, so adding or removing one person changes no
+other person's draws. The episode seed itself comes from the episode request (`RunEpisode`, `reset_episode`) when it
+names one, else from `run_seed|world|episode_id` (see [env/README.md](../env/README.md)): runs that must pair, such as
+a world and its edit, pass the same explicit seed.
 
 ## HuNavSim default agent template
 

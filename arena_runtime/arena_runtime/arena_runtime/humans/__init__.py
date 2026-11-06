@@ -603,8 +603,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
 
     def authored_name(self, realized: str) -> str:
         """Strip the env prefix and a trailing `/<level_id>` from a realized entity name."""
-        prefix = self._realizer.prefix()
-        name = realized[len(prefix) + 1 :] if prefix and realized.startswith(f"{prefix}/") else realized
+        name = self._realizer.unprefix(realized)
         head, sep, tail = name.rpartition("/")
         if sep and head and tail in self._realizer._level_origins:
             return head
