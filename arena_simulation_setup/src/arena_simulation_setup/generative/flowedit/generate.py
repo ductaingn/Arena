@@ -16,7 +16,7 @@ from arena_simulation_setup.kg.scene import kind_of
 from arena_simulation_setup.utils.geometry import Position
 
 from .build import presets, zones_at
-from .edit import EditType, LayoutOp, Site, apply
+from .edit import EditType, LayoutOp, Site, apply, world_object
 
 if TYPE_CHECKING:
     import shapely
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from arena_simulation_setup.shared.world import Door, Schedule
     from arena_simulation_setup.tree.World.model import Level, Zone
 
-GENERATOR_VERSION = 4
+GENERATOR_VERSION = 5
 MANIFEST_FORMAT = "flowedit-generated/1"
 MAX_TRIES = 50
 #: Function fields the generator samples. The reader writes `dwell` into the `duration` of the step at the object; `satisfies` is not drawn yet.
@@ -490,8 +490,15 @@ def _clone_demand(site: Site, obj: str) -> dict[str, Any]:
     return out
 
 
+def _clone_dock(site: Site, obj: str) -> dict[str, Any]:
+    """The `dock` param that gives a new object the dock of `obj`, none for an object without one in `world.yaml`."""
+    found = world_object(site.world, obj.partition(":")[2])
+    dock = None if found is None else found[0].objects[found[1]].dock
+    return {} if dock is None else {"dock": [[p.x, p.y] for p in dock]}
+
+
 def _insert(site: Site, rng: random.Random, wide: bool = False) -> Sampled:
-    """Insert a copy of an object on the floor, one with demand first, its demand copied, in a room of its level (`room`)."""
+    """Insert a copy of an object on the floor, one with demand first, its demand and dock copied, in a room of its level (`room`)."""
     modelled = floor_objects(site)
     source = _prefer(rng, [obj for obj in demand_objects(site) if obj in modelled], modelled, wide)
     placed = _at(site, source)
@@ -508,7 +515,7 @@ def _insert(site: Site, rng: random.Random, wide: bool = False) -> Sampled:
     spot = spots.in_zone(rng, model, rng.choice(zones))
     if spot is None:
         raise Redraw("no valid spot")
-    return Sampled(EditType.INSERT, name, {"model": model, "x": spot[0], "y": spot[1], "yaw": spot[2], "level": level_id, **_clone_demand(site, source)}, Scope.ROOM.value)
+    return Sampled(EditType.INSERT, name, {"model": model, "x": spot[0], "y": spot[1], "yaw": spot[2], "level": level_id, **_clone_demand(site, source), **_clone_dock(site, source)}, Scope.ROOM.value)
 
 
 def _door_rooms(site: Site) -> dict[str, set[str]]:
@@ -775,13 +782,13 @@ def controls(site: Site, chain: Generated) -> list[tuple[Control, Site]]:
             return []
         level_id, pose = placed
         spot = {k: first.params.get(k, pose[k]) for k in ("x", "y", "yaw")}
-        inert = {"model": model, **spot, "level": str(first.params.get("level", level_id))}
+        inert = {"model": model, **spot, "level": str(first.params.get("level", level_id)), **_clone_dock(site, first.target)}
         moved = {**{k: v for k, v in first.params.items() if k in ("x", "y", "yaw", "level")}, "leave_demand": True}
         return [
             (Control.INERT_OBJECT, apply(site, EditType.INSERT, f"{first.target}{INERT_SUFFIX}", inert)),
             (Control.MOVED_WITHOUT_DEMAND, apply(site, EditType.MOVE, first.target, moved)),
         ]
-    keep = ("model", "x", "y", "yaw", "level")
+    keep = ("model", "x", "y", "yaw", "level", "dock")
     return [(Control.INERT_OBJECT, apply(site, EditType.INSERT, f"{first.target}{INERT_SUFFIX}", {k: v for k, v in first.params.items() if k in keep}))]
 
 

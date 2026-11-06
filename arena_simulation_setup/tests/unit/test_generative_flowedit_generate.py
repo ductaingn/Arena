@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import math
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EditType, Site, dump_edits, open_site, save
+import yaml
+from arena_simulation_setup.generative.flowedit.edit import DEMAND_VERBS, EditType, Site, dump_edits, open_site, save, world_object
 from arena_simulation_setup.generative.flowedit.generate import CAPACITY, DEFAULT_DWELL_S, DWELL_S, FIELDS, FLOOR_HEIGHT_M, Generated, dump_manifest, floor_objects, generate
+from flowedit_docks import FACING_NORTH, LOCKER
 
 if TYPE_CHECKING:
     from arena_simulation_setup.generative.flowedit.generate import WallPiece
     from arena_simulation_setup.tree.World.model import Zone
+    from arena_simulation_setup.utils.geometry import Position
 
 pytest.importorskip("numpy")
 pytestmark = pytest.mark.usefixtures("local_root")
@@ -437,3 +441,38 @@ def test_without_a_known_face_people_queue_behind_the_yaw(queue: Site, monkeypat
     monkeypatch.setitem(generate._FACES, (queue.root, "Odd/Model"), "up")
     assert generate.front_angle(queue.root, "Some/Model") == pytest.approx(math.pi)
     assert generate.front_angle(queue.root, "Odd/Model") == pytest.approx(math.pi)
+
+
+@pytest.fixture
+def docked_locker(tmp_path: Path) -> Site:
+    """hospital_1 without scenario plus a docked parcel locker against a wall, its only object with a need."""
+    root = tmp_path / "worlds" / "hospital_docked"
+    shutil.copytree(HOSPITAL, root, ignore=shutil.ignore_patterns("scenarios"))
+    world = yaml.safe_load((root / "world.yaml").read_text())
+    humansim = {"type": "parcel_locker", "capacity": 1, "satisfies": {"parcel": 50.0}}
+    world["levels"][0]["objects"].append({"name": LOCKER.name, "model": LOCKER.model, "pose": [20.0, LOCKER.back, FACING_NORTH], "dock": LOCKER.dock, "humansim": humansim})
+    (root / "world.yaml").write_text(yaml.safe_dump(world, sort_keys=False))
+    return open_site(root)
+
+
+def _dock(site: Site, obj: str) -> list[Position] | None:
+    found = world_object(site.world, obj.partition(":")[2])
+    assert found is not None, obj
+    level, i = found
+    return level.objects[i].dock
+
+
+def test_insert_copies_an_objects_dock(docked_locker: Site) -> None:
+    (chain,) = generate(docked_locker, seed=0, types=[EditType.INSERT])
+    edit = chain.site.edits[-1]
+    assert edit.params["model"] == "parcel_locker" and edit.params["dock"] == LOCKER.dock
+    assert _dock(chain.site, edit.target) == _dock(docked_locker, f"obj:{LOCKER.name}")
+
+
+@pytest.mark.parametrize("kind", [EditType.MOVE, EditType.INSERT])
+def test_the_inert_copy_keeps_the_dock(docked_locker: Site, kind: EditType) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import Control, controls
+
+    (chain,) = generate(docked_locker, seed=0, types=[kind])
+    inert = dict(controls(docked_locker, chain))[Control.INERT_OBJECT]
+    assert _dock(inert, f"{chain.site.edits[0].target}_inert") == _dock(docked_locker, f"obj:{LOCKER.name}")
