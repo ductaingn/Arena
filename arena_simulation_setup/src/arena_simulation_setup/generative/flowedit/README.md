@@ -181,7 +181,7 @@ flowedit read hospital_1__<id> --write                  # the same people, the f
 
 ## Recording runs
 
-`flowedit run <world> [<scenario>] [--edit TYPE TARGET [-p KEY=VALUE ...]]` is the whole chain in one command: apply the edit (or none) and save the world, read the crowd into it under `--settings` and `--seed` as `scenarios/flowedit_<scenario>_<settings digest>_s<seed>/`, launch it headless (`sim:=dummy human:=arena`) with HumanSim recording (`humansim.record:=true`), stop after `--duration` seconds (default 300) and write the run to `$ARENA_DATA_DIR/flowedit_runs/<world>__<scenario>/` (or `--out`). `--launch-arg` passes more `arena launch` arguments, `--dry-run` prints the world and launch without saving or launching. A finished run is skipped unless `--again`. A run is a look at one world, not one side of a pair: `--seed` keys the reader's draws, but the runtime seeds its episode from a `run_seed` drawn at random per launch, so a base and its edit run this way never get the same crowd (`paired: false` in `run.yaml`). Paired runs go through arena_evaluation's benchmark runner, which gives each stage its seed.
+`flowedit run <world> [<scenario>] [--edit TYPE TARGET [-p KEY=VALUE ...]]` is the whole chain in one command: apply the edit (or none) and save the world, read the crowd into it under `--settings` and `--seed` as `scenarios/flowedit_<scenario>_<settings digest>_s<seed>/`, launch it headless (`sim:=dummy human:=arena`) with HumanSim recording (`humansim.record:=true`), stop after `--duration` seconds (default 300) and write the run to `$ARENA_DATA_DIR/flowedit_runs/<world>__<scenario>/` (or `--out`). `--launch-arg` passes more `arena launch` arguments, `--dry-run` prints the world and launch without saving or launching. A finished run is skipped unless `--again`. A run is a look at one world, not one side of a pair: `--seed` keys the reader's draws, but the runtime seeds its episode from a `run_seed` drawn at random per launch, so a base and its edit run this way never get the same crowd (`paired: false` in `run.yaml`). Paired runs go through arena_evaluation's benchmark runner, which gives each stage its seed ([`flowedit suite`](#paired-runs)).
 
 ```bash
 flowedit run hospital_1 queue --edit function obj:fountain -p dwell=20 --settings crowd.yaml --seed 3
@@ -199,7 +199,7 @@ flowedit run hospital_1 queue --edit function obj:fountain -p dwell=20 --setting
 
 The scenario a run reads into a shipped world, `scenarios/flowedit_<scenario>_<settings digest>_s<seed>/`, is ignored by git: a sweep writes it again.
 
-`flowedit sweep <split> [--partition P] [--settings S] [--jobs N]` records every run of a split: it generates the split's edited worlds (and controls) again, checks the generator still makes every name the split lists, then runs each world of the chosen partitions once per seed of its partition, `--jobs` launches at a time, each on its own ROS domain from `--domain-base` (default 150). Runs land in `$ARENA_DATA_DIR/flowedit_runs/<split name>/`, one log per run in `_sweep/`; finished runs are skipped, so a sweep resumes. A split file ([`split.py`](split.py)) names the worlds of `train`, `held_out_edits` (other edits of the train worlds) and `held_out_worlds` (worlds with no run in train), and per base world the `flowedit generate` call that makes its edited worlds again under those names (`controls: true` makes the geometry-only controls too). `seeds` is one list for every partition or a list per partition. `settings` (optional) holds the crowd settings of every run, a sweep's `--settings` file merged over them; the sweep writes the merged settings to `_sweep/` and hands that file to every run. `control_worlds` links each function-carrying edit to its controls, which sit in the edit's partition. Every edited world is scored against its base world run with the same seed: a partition that lists edits but not their base (held-out edits at test seeds) runs the base world at its seeds as a reference run, never trained on (`reference` in `--dry-run`, `(reference)` in the log). [`splits/peds_pilot.yaml`](splits/peds_pilot.yaml) is the pilot: hospital_1 with 3 chains per edit type and office_1 with 1, their controls, seeds 1-5 for train and 6-8 for test, 155 runs; the study design's split is larger. A sweep launches `flowedit run`, so its runs are not seed-paired either; paired runs of a split come from a benchmark suite with each stage's seed.
+`flowedit sweep <split> [--partition P] [--settings S] [--jobs N]` records every run of a split: it generates the split's edited worlds (and controls) again, checks the generator still makes every name the split lists, then runs each world of the chosen partitions once per seed of its partition, `--jobs` launches at a time, each on its own ROS domain from `--domain-base` (default 150). Runs land in `$ARENA_DATA_DIR/flowedit_runs/<split name>/`, one log per run in `_sweep/`; finished runs are skipped, so a sweep resumes. A split file ([`split.py`](split.py)) names the worlds of `train`, `held_out_edits` (other edits of the train worlds) and `held_out_worlds` (worlds with no run in train), and per base world the `flowedit generate` call that makes its edited worlds again under those names (`controls: true` makes the geometry-only controls too). `seeds` is one list for every partition or a list per partition. `settings` (optional) holds the crowd settings of every run, a sweep's `--settings` file merged over them; the sweep writes the merged settings to `_sweep/` and hands that file to every run. `control_worlds` links each function-carrying edit to its controls, which sit in the edit's partition. Every edited world is scored against its base world run with the same seed: a partition that lists edits but not their base (held-out edits at test seeds) runs the base world at its seeds as a reference run, never trained on (`reference` in `--dry-run`, `(reference)` in the log). [`splits/peds_pilot.yaml`](splits/peds_pilot.yaml) is the pilot: hospital_1 with 3 chains per edit type and office_1 with 1, their controls, seeds 1-5 for train and 6-8 for test, 155 runs; the study design's split is larger. A sweep launches `flowedit run`, so its runs are not seed-paired either; paired runs of a split come from a benchmark suite with each stage's seed ([`flowedit suite`](#paired-runs)).
 
 ```bash
 flowedit sweep splits/peds_pilot.yaml --jobs 2                                # the training crowd
@@ -207,6 +207,27 @@ flowedit sweep splits/peds_pilot.yaml --partition held_out_edits --settings test
 ```
 
 Entrance visitors follow their visitor type, but HumanSim despawns a released agent as soon as it stands inside its target sink, whatever it is doing, and the reader's sink strip (0.1 to 0.6 m inside the door) lies right in front of its source strip (0.8 to 1.8 m). A visitor whose way to its first stop runs along the door's wall crosses the sink within a second and is gone. Until the sink only takes people who leave, [`splits/peds_pilot.yaml`](splits/peds_pilot.yaml) runs without entrances (`settings: {entrances: {rate: 0}}`), so only the reader's placed people walk.
+
+## Paired runs
+
+`flowedit suite <split> [--partition P] [--settings S] [--out FILE] [--robot R]` writes a split as an arena_evaluation benchmark suite whose runs pair by seed. It generates the split's edited worlds again with the same manifest check as a sweep, reads the crowd into every world at every seed of its partition (the reference runs included), and writes one stage per world and seed. Each stage runs one episode, its `seed` the runtime's episode seed and the reader's seed both, so an edit stage and its base world's stage at that seed run the same people on the same seed. The suite lands in `<imported assets root>/suites/flowedit_<split name>.yaml`, where `--suite flowedit_<split name>` finds it, so a run of it resumes by name. `flowedit suite` prints the call:
+
+```bash
+flowedit suite splits/peds_pilot.yaml
+arena evaluation benchmark --suite flowedit_peds_pilot --contest '[{name: peds_only}]' --lanes 2
+```
+
+| Stage field | Value |
+|---|---|
+| `name` | `<world>__s<seed>`; an edit stage pairs with `<base world>__s<seed>` (`suite.pairs`) |
+| `map`, `seed`, `episodes` | the world, the seed, 1 |
+| `config.scenario.file` | the reader's scenario of that world, settings and seed, `flowedit_<scenario>_<settings digest>_s<seed>` |
+| `timeout` | the split's `duration`, sim seconds |
+| `robot`, `modes.robots`, `config.stationary` | the runner needs a robot in every stage: `--robot` (default `jackal`) parked at (1000, 1000) by the `stationary` mode, as the runner parks its `unhindered_peds` reference runs |
+
+The suite's `launch` runs flatsim headless under lockstep with `human.robots.visible: false`, so the people never see the parked robot, and `references: false`, since the split names its own reference runs. The contestant needs no planner: `[{name: peds_only}]` brings the robot up with the sim's default adapter. `--dry-run` prints the suite without writing a scenario or the suite, and a suite file `flowedit suite` did not write is kept unless `--force`.
+
+Seed pairing also needs the runtime's per-person draws (walker parameters, seats, models) keyed on stable names rather than the env, which the runner counts up for every world: the HumanSim adapter's stable stream keys (`bugfix/humansim-stable-stream-keys`). Without them a base and its edit get different walkers although their seeds match.
 
 ## Crowd settings
 
@@ -233,5 +254,6 @@ entrances: {rate: 0.1, max_concurrent: 6, max_total: 30}
 | `generate.py` | sampling edits from a seed, geometry-only controls, the manifest |
 | `run.py` | one edit, settings and seed to a recorded run and its tracks |
 | `split.py` | split files and the sweep over them |
+| `suite.py` | a split as a seed-paired benchmark suite |
 | `splits/` | committed splits |
-| `cli.py` | `flowedit build`, `flowedit edit`, `flowedit generate`, `flowedit read`, `flowedit run`, `flowedit sweep` |
+| `cli.py` | `flowedit build`, `flowedit edit`, `flowedit generate`, `flowedit read`, `flowedit run`, `flowedit sweep`, `flowedit suite` |

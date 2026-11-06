@@ -1,4 +1,4 @@
-"""`flowedit`: build the FLOWEDIT graph of a world and scenario, edit it, generate edits from a seed, read a site back into a scenario, and record a PEDS run of it."""
+"""`flowedit`: build the FLOWEDIT graph of a world and scenario, edit it, generate edits from a seed, read a site back into a scenario, record a PEDS run of it, and write a split as a seed-paired benchmark suite."""
 
 from __future__ import annotations
 
@@ -219,9 +219,53 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
     return 1 if counts["failed"] else 0
 
 
+def _cmd_suite(args: argparse.Namespace) -> int:
+    import tempfile
+
+    from . import split as SP
+    from . import suite as SU
+
+    doc = SP.load(args.split)
+    parts = args.partition or list(SP.PARTITIONS)
+    crowd = SP.crowd(doc, args.settings)
+    duration = float(doc.get("duration", 300.0))
+    out = args.out or SU.default_out(args.split)
+    if not args.no_generate and not args.dry_run:
+        with tempfile.TemporaryDirectory(prefix="flowedit_suite_") as manifests:
+            SP.regenerate_worlds(doc, Path(manifests), log=lambda m: print(m, file=sys.stderr))
+    stages = []
+    for job in SP.jobs(doc, parts):
+        root = world_root(args.worlds, job.world)
+        notes: list[str] = []
+        # a base world runs the source's scenario, an edited world names its own
+        source = doc["sources"][SP.base_of(job.world)].get("scenario")
+        site = open_site(root, source if SP.base_of(job.world) == job.world else None, None, notes)
+        if not args.dry_run:
+            _check_writable(args.worlds, job.world, root)
+        prepared = prepare(site, _base(args.worlds, site), [], crowd, job.seed, notes, dry_run=args.dry_run)
+        for note in notes:
+            print(f"note: {job.label}: {note}", file=sys.stderr)
+        stages.append(SU.stage(job.world, job.seed, prepared.scenario, duration, args.robot))
+    suite = SU.suite_doc(stages)
+    SU.pairs(suite)
+    header = [f"split {args.split.name}, partitions {', '.join(parts)}, crowd settings {S.digest(crowd)}", f"{len(stages)} stages, each one episode at the seed its name ends in; an edit stage pairs with its base world's stage at that seed"]
+    if args.dry_run:
+        print(to_yaml(suite), end="")
+        print(f"(dry run - no scenario or suite written, {len(stages)} stages)", file=sys.stderr)
+        return 0
+    try:
+        written = SU.write(suite, out, header, force=args.force)
+    except ValueError as exc:
+        print(f"flowedit: {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {written}: {len(stages)} stages")
+    print(SU.benchmark_command(written.stem, args.lanes))
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="flowedit", description="FLOWEDIT graphs: each object's demand on its KG node. `flowedit <verb> --help` lists a verb's options.")
-    verbs = parser.add_subparsers(dest="verb", required=True, metavar="{build,edit,generate,read,run,sweep}")
+    verbs = parser.add_subparsers(dest="verb", required=True, metavar="{build,edit,generate,read,run,sweep,suite}")
     p = verbs.add_parser("build", help="build the graph of a world and scenario", description="build the graph of a world and scenario, a dry run that prints it without --write")
     p.add_argument("world", help="the world to build from")
     p.add_argument("scenario", nargs="?", help="the scenario under the world's scenarios/ whose objects join the graph (default: world objects only)")
@@ -314,6 +358,23 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--no-generate", action="store_true", help="skip generating the edited worlds again")
     p.add_argument("--dry-run", action="store_true", help="list the runs without launching")
     p.set_defaults(fn=_cmd_sweep)
+
+    p = verbs.add_parser(
+        "suite",
+        help="write a split as a seed-paired benchmark suite",
+        description="generate the split's edited worlds again, read the crowd into every world at every seed of its partition, and write an arena_evaluation benchmark suite of one stage per world and seed, the stage's episode seed the reader's seed, so an edit stage pairs with its base world's stage at that seed; prints the `arena evaluation benchmark` call",
+    )
+    p.add_argument("split", type=Path, help="the split file (see split.py)")
+    p.add_argument("--partition", action="append", choices=["train", "held_out_edits", "held_out_worlds"], default=None, help="a partition to write; repeatable (default: all)")
+    p.add_argument("--settings", type=Path, default=None, help="crowd settings YAML of every run, merged over the split's own `settings`")
+    p.add_argument("--out", type=Path, default=None, help="suite file (default: <imported assets root>/suites/flowedit_<split name>.yaml, where `--suite flowedit_<split name>` finds it)")
+    p.add_argument("--robot", default="jackal", help="robot of every stage, parked off the map and unseen (default jackal, the robot of the shipped suites)")
+    p.add_argument("--lanes", type=int, default=2, help="lanes in the printed benchmark call (default 2)")
+    p.add_argument("--worlds", type=Path, default=None, help="worlds root to read (default: the ARENA_WORLD_PATH roots, then $ARENA_DIR/arena_simulation_setup/worlds, then the resolvers)")
+    p.add_argument("--no-generate", action="store_true", help="skip generating the edited worlds again")
+    p.add_argument("--force", action="store_true", help="replace a suite file flowedit did not write")
+    p.add_argument("--dry-run", action="store_true", help="print the suite without writing scenarios or the suite")
+    p.set_defaults(fn=_cmd_suite)
     return parser
 
 
