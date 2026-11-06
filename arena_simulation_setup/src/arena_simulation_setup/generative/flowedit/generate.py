@@ -17,7 +17,7 @@ from arena_simulation_setup.utils.face import front_angle as annotated_front
 from arena_simulation_setup.utils.geometry import Position
 
 from .build import presets, zones_at
-from .edit import EditType, LayoutOp, Site, apply, world_object
+from .edit import Edit, EditType, LayoutOp, Site, apply, world_object
 
 if TYPE_CHECKING:
     import shapely
@@ -748,9 +748,16 @@ class Control(enum.StrEnum):
     MOVED_WITHOUT_DEMAND = "moved_without_demand"
 
 
+def own_edits(site: Site, chain: Site) -> list[Edit]:
+    """The edits `chain` adds to `site`, its base; ValueError when `site` is not its base."""
+    if chain.edits[: len(site.edits)] != site.edits:
+        raise ValueError(f"{site.name} is not the base of {chain.name}")
+    return chain.edits[len(site.edits) :]
+
+
 def controls(site: Site, chain: Generated) -> list[tuple[Control, Site]]:
     """The geometry-only controls of a chain's first edit when it carries function, applied to `site`, the chain's base."""
-    first = chain.site.edits[0]
+    first = own_edits(site, chain.site)[0]
     if not chain.records[0]["function_carrying"] or first.type not in (EditType.MOVE, EditType.INSERT):
         return []
     if first.type is EditType.MOVE:
@@ -779,6 +786,6 @@ def dump_manifest(site: Site, chains: Sequence[Generated], seed: int, per_type: 
             entry["path"] = str(worlds[chain.site.name])
         made = (chain_controls or {}).get(chain.site.name) or []
         if made:
-            entry["controls"] = [{"kind": kind.value, "world": control.name, "ids": [e.id for e in control.edits], **({"path": str(worlds[control.name])} if worlds is not None and control.name in worlds else {})} for kind, control in made]
+            entry["controls"] = [{"kind": kind.value, "world": control.name, "ids": [e.id for e in own_edits(site, control)], **({"path": str(worlds[control.name])} if worlds is not None and control.name in worlds else {})} for kind, control in made]
         entries.append(entry)
     return {"format": MANIFEST_FORMAT, "generator_version": GENERATOR_VERSION, "base": site.name, "scenario": site.scenario, "seed": seed, "per_type": per_type, "steps": steps, "fields": list(FIELDS), "chains": entries}
