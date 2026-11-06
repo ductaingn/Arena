@@ -53,6 +53,7 @@ from arena_runtime.env.interactive.entities import EntityHandles
 from arena_runtime.env.node import _LATCHED, EnvNode, _available
 from arena_runtime.env.phase_clock import PhaseClock
 from arena_runtime.env.placement import random_obstacle_pose, random_robot_pose
+from arena_runtime.env.robot_manager.charging import Chargers
 from arena_runtime.env.robot_manager.robot_manager import footprint_radius
 from arena_runtime.env.run_task import RunningTask
 from arena_runtime.env.task_layer import (
@@ -664,7 +665,7 @@ class EpisodeNode(EnvNode):
                 compacted = self._world_manager.world_compacted()
                 statics = authored_statics(compacted)
                 self._judge_zones = zone_polygons(statics)
-                self._chargers = {entity.name: entity.charge_power_w for entity in statics.objects if entity.charge_power_w is not None}
+                self._chargers = Chargers({entity.name: entity.charge_power_w for entity in statics.objects if entity.charge_power_w is not None})
                 self._judge_walls = self._wall_grid(compacted)
                 for manager in self._robots_manager.managers.values():
                     manager.set_episode_conditions(self._episode_conditions)

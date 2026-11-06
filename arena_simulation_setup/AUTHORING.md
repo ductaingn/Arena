@@ -1075,12 +1075,15 @@ inner radius is at least twice the planner's goal tolerance (1.2 x 1.0 m
 for a jackal under nav2). A scenario object with `dock:` is refused: goto
 targets resolve on the world's levels.
 
-A docked object with `charge_power_w` is a charger. While `robot in <object>`
-holds, the runtime sends that power to the robot's power publisher
+A docked object with `charge_power_w` is a charger. Once a robot has stood
+still in its dock for a second (within the judge's park drift of 5 cm and 5
+degrees), the runtime sends that power to the robot's power publisher
 (`<robot_ns>/power_publisher/charge_power`, latched), which charges the
-battery with it less the robot's own draw, up to `battery_capacity_wh`. Leaving
-the dock sends 0 W. The energy the robot consumes, and so its cost of
-transport, counts the same with or without charging.
+battery with it less the robot's own draw, up to `battery_capacity_wh`. A
+charger charges one robot at a time, the first one parked in its dock, until
+it moves or leaves; another robot in the same dock gets 0 W meanwhile, and so
+does a robot driving through. The energy the robot consumes, and so its cost
+of transport, counts the same with or without charging.
 
 ```yaml
 objects:

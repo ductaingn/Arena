@@ -27,8 +27,7 @@ import tf2_ros
 from arena_rclpy_mixins.Async import LaunchHandle
 from arena_rclpy_mixins.shared import FrameNamespace, Namespace
 from arena_robots.Robot import RobotView
-from arena_simulation_setup.shared.conditions import MembershipAtom, render_until
-from arena_simulation_setup.shared.judge import atom_holds
+from arena_simulation_setup.shared.conditions import render_until
 from shapely.ops import polylabel
 
 from arena_runtime._node import NodeInterface
@@ -40,7 +39,7 @@ from arena_runtime.shared import Orientation, Pose, Position, Robot
 from arena_runtime.sim._interface import SimUnavailable
 
 if typing.TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
     from arena_simulation_setup.shared.conditions import EpisodeCondition
     from arena_simulation_setup.shared.judge import Sample, Zones
@@ -100,11 +99,6 @@ def footprint_radius(config: RobotView) -> float:
     if mobile.footprint:
         return max(math.hypot(x, y) for x, y in mobile.footprint) + (mobile.footprint_padding or 0.0)
     raise ValueError(f"{mobile.path}: sets neither radius nor footprint")
-
-
-def charge_power(robot: str, sample: Sample, zones: Zones, chargers: Mapping[str, float]) -> float:
-    """Power in W the robot charges with from the charger whose dock holds it on `sample`, 0 off every charger's dock."""
-    return next((power for name, power in chargers.items() if atom_holds(MembershipAtom(subject='robot', zone=name), sample, zones, robot)), 0.0)
 
 
 class RobotManager(NodeInterface):
@@ -436,9 +430,8 @@ class RobotManager(NodeInterface):
         msg.pose = pose.to_msg()
         self._task_pose_pub.publish(msg)
 
-    def publish_charge_power(self, sample: Sample, zones: Zones, chargers: Mapping[str, float]) -> None:
-        """Send the power the robot charges with on this tick to its power publisher, on change."""
-        power = charge_power(self.name, sample, zones, chargers)
+    def publish_charge_power(self, power: float) -> None:
+        """Send the power in W the robot charges with to its power publisher, on change."""
         if power != self._charge_power_w:
             self._charge_power_w = power
             self._charge_pub.publish(std_msgs.msg.Float64(data=power))
