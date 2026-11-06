@@ -19,6 +19,7 @@ from arena_robots.caps import PolygonSpec
 from rclpy.parameter import Parameter
 
 from arena_runtime.env.collision_grid import Cell
+from arena_runtime.humans import ped_radius
 
 if TYPE_CHECKING:
     from arena_runtime.env.environment_manager import EnvironmentManager
@@ -55,7 +56,6 @@ class CollisionTrackerNode(rclpy.node.Node):
         polygons: dict[str, PolygonSpec],
         *,
         rate_hz: float = 10.0,
-        default_pedestrian_radius: float = 0.3,
         footprint: list[list[float]] | None = None,
     ):
         for name, spec in polygons.items():
@@ -70,7 +70,6 @@ class CollisionTrackerNode(rclpy.node.Node):
 
         self._rm = robot_manager
         self._env: EnvironmentManager = robot_manager._environment_manager
-        self._default_peds_radius = default_pedestrian_radius
         self._peds_msg: arena_people_msgs.msg.Pedestrians | None = None
 
         self._poly_cache: dict[str, dict] = {}
@@ -181,7 +180,7 @@ class CollisionTrackerNode(rclpy.node.Node):
             events.append(ev)
 
         for p, px, py in self._pedestrians():
-            if not footprint.intersects(shapely.Point(px, py).buffer(self._radius(p))):
+            if not footprint.intersects(shapely.Point(px, py).buffer(ped_radius(p.radius))):
                 continue
             ev = arena_robots_msgs.msg.CollisionEvent()
             ev.kind = arena_robots_msgs.msg.CollisionEvent.KIND_PEDESTRIAN
@@ -210,11 +209,8 @@ class CollisionTrackerNode(rclpy.node.Node):
             out.append((p, px, py))
         return out
 
-    def _radius(self, pedestrian: arena_people_msgs.msg.Pedestrian) -> float:
-        return pedestrian.radius if pedestrian.radius > 0.0 else self._default_peds_radius
-
     def _hits_pedestrian(self, poly: shapely.Polygon) -> bool:
-        return any(poly.intersects(shapely.Point(px, py).buffer(self._radius(p))) for p, px, py in self._pedestrians())
+        return any(poly.intersects(shapely.Point(px, py).buffer(ped_radius(p.radius))) for p, px, py in self._pedestrians())
 
     def shutdown(self):
         self.destroy_node()
