@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import attrs
 
 from arena_simulation_setup.kg.scene import kind_of
+from arena_simulation_setup.utils.face import front_angle as annotated_front
 from arena_simulation_setup.utils.geometry import Position
 
 from .build import presets, zones_at
@@ -194,32 +195,9 @@ def footprint(root: Path, model: str, x: float, y: float, yaw: float) -> shapely
     return shapely.affinity.translate(shapely.affinity.rotate(local, yaw, origin=(0, 0), use_radians=True), xoff=x, yoff=y)
 
 
-def face_front(face: object) -> float | None:
-    """The angle in rad, in the model's frame, of an annotated `face` (an arena_assets `Face` value or a legacy angle),
-    None when it names no face. The same rule as the runtime's `front_angle` (arena_runtime `humans/support.py`), which
-    turns a world object so people queue at that front."""
-    from arena_assets.impl import Face
-
-    def front(f: Face) -> float:
-        return math.remainder(math.radians(f.angle + 180.0), math.tau)
-
-    if isinstance(face, str):
-        try:
-            return front(Face(face))
-        except ValueError:
-            try:
-                face = float(face)
-            except ValueError:
-                return None
-    if isinstance(face, (int, float)) and not isinstance(face, bool):
-        return next((front(f) for f in Face if f.angle == float(face)), None)
-    return None
-
-
 def front_angle(root: Path, model: str) -> float:
-    """The angle, in `model`'s own frame, of the side people queue at and use it from, once resolved (`resolve_footprints`):
-    its annotated front, else pi. The runtime keeps the yaw of an object without a known `face` and queues behind it."""
-    front = face_front(_FACES.get((root, model)))
+    """The angle in `model`'s frame of the side people queue at, once resolved (`resolve_footprints`): its annotated front, else pi, behind the yaw as HumanSim queues an object without a known `face`."""
+    front = annotated_front(_FACES.get((root, model)))
     return math.pi if front is None else front
 
 

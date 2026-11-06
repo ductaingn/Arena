@@ -93,6 +93,7 @@ from arena_simulation_setup.shared.world import CABIN_DOOR_INSET, CABIN_DOOR_THR
 from arena_simulation_setup.tree.assets.Human import HumanIdentifier
 from arena_simulation_setup.tree.World.model import elevator_doorway_pose
 from arena_simulation_setup.utils.affordance import AffordanceClaims, AffordanceKind, AffordanceSlot, SlotOccupied, conflicts, has_z, max_occupancy, placed_slots
+from arena_simulation_setup.utils.face import front_angle
 from geometry_msgs.msg import (
     Point,
     Point32,
@@ -121,7 +122,7 @@ from arena_runtime.env.constants.rng import stable_int
 from arena_runtime.env.realizer import Realizer
 from arena_runtime.humans import PED_RADIUS, BaseHumanSimulator, HumanSimulatorOptions, Segment
 from arena_runtime.humans.itinerary import STIMULUS_TELEPORTED, ItineraryDriver, Stop, semantic_atom
-from arena_runtime.humans.support import Support, front_angle, seat_stand
+from arena_runtime.humans.support import Support, seat_stand
 from arena_runtime.shared import Door, DynamicObstacle, Elevator, Obstacle, Orientation, Pose, Position, Region, Robot, Wall
 
 from .agent import ArenaHumanDynamicObstacle, agent_type_def, agent_type_stimuli, flow_agent_template, path_agent_type_name

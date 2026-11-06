@@ -163,8 +163,9 @@ share one definition. [`request.py`](../../../../arena_runtime/arena_runtime/are
   by name. A zone target dispatches to a free map cell inside the zone with the
   robot's spawn clearance, a docked object (a world object with a `dock:`
   polygon) to such a cell within half the dock's inner radius of its deepest
-  point, facing the object (a planner's goal tolerance then cannot stop the
-  robot outside the dock), a door or
+  point (a planner's goal tolerance then cannot stop the robot outside the
+  dock), facing the object, or its annotated front where the dock covers the
+  object's own origin, a door or
   elevator to a point inside its polygon, and a
   `pose` authored next to the name (`{goto: pharmacy, pose: [4.0, 27.5, 0.0]}`)
   is kept as the dispatch pose.

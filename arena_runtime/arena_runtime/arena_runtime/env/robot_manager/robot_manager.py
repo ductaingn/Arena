@@ -26,6 +26,7 @@ from arena_rclpy_mixins.Async import LaunchHandle
 from arena_rclpy_mixins.shared import FrameNamespace, Namespace
 from arena_robots.Robot import RobotView
 from arena_simulation_setup.shared.conditions import render_until
+from arena_simulation_setup.utils.face import front_angle
 from shapely.ops import polylabel
 
 from arena_runtime._node import NodeInterface
@@ -40,6 +41,7 @@ if typing.TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
     from arena_simulation_setup.shared.conditions import EpisodeCondition
+    from arena_simulation_setup.shared.entities import Obstacle
     from arena_simulation_setup.shared.judge import Sample, Zones
 
     from arena_runtime.env.adapters import Adapter, ResetContext
@@ -97,6 +99,12 @@ def footprint_radius(config: RobotView) -> float:
     if mobile.footprint:
         return max(math.hypot(x, y) for x, y in mobile.footprint) + (mobile.footprint_padding or 0.0)
     raise ValueError(f"{mobile.path}: sets neither radius nor footprint")
+
+
+def _front_yaw(obstacle: Obstacle) -> float:
+    """Yaw of an object's annotated front (`face`), behind its yaw without one, the side HumanSim queues people at."""
+    front = front_angle((obstacle.model.resolve_sync().annotation or {}).get('face'))
+    return obstacle.pose.orientation.to_yaw() + (math.pi if front is None else front)
 
 
 class RobotManager(NodeInterface):
@@ -581,16 +589,17 @@ class RobotManager(NodeInterface):
         return phase
 
     def _resolve_target(self, phase: GoToPhase) -> GoToPhase:
-        """Give a named zone, door, elevator or docked object target its dispatch pose unless it carries one, a ped target keeps following the ped. A docked object's pose lies within half the dock's inner radius of its deepest point, facing the object."""
+        """Give a named zone, door, elevator or docked object target its dispatch pose unless it carries one, a ped target keeps following the ped. A docked object's pose lies within half the dock's inner radius of its deepest point, facing the object, or its front where the dock covers the object's origin."""
         if phase.target is None or phase.pose is not None:
             return phase
         world = authored_statics(self.node._world_manager.world_compacted())
         corners = world.lookup_zone_polygon(phase.target)
         if corners is None:
             return phase
+        outline = shapely.Polygon([(corner.x, corner.y) for corner in corners])
         docked = next((entity for entity in world.objects if entity.name == phase.target and entity.dock is not None), None)
         if docked is not None or any(zone.name == phase.target for zone in world.zones):
-            area = shapely.Polygon([(corner.x, corner.y) for corner in corners])
+            area = outline
             if docked is not None:
                 # away from the dock's edges, so a planner's goal tolerance cannot stop the robot outside it
                 deepest = polylabel(area)
@@ -603,7 +612,12 @@ class RobotManager(NodeInterface):
             position = world.point_resolver(self.node.conf.General.RNG.stream("robots", "target", self.name)).resolve(phase.target)
         if docked is None:
             return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.identity()))
-        facing = math.atan2(docked.pose.position.y - position.y, docked.pose.position.x - position.x)
+        origin = docked.pose.position
+        if outline.covers(shapely.Point(origin.x, origin.y)):
+            # the robot may stand on the origin itself, where no direction faces the object
+            facing = _front_yaw(docked)
+        else:
+            facing = math.atan2(origin.y - position.y, origin.x - position.x)
         return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.from_yaw(facing)))
 
     async def submit_task(self, request: TaskRequest, start: Pose | None = None, pedestrians: Iterable[str] = ()) -> None:
