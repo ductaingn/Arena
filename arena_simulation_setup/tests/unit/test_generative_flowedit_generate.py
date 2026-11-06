@@ -378,21 +378,37 @@ def test_a_function_carrying_insert_gets_only_the_inert_copy(queue: Site) -> Non
     raise AssertionError("no function-carrying insert in 20 seeds")
 
 
-def test_controls_on_an_edited_world_follow_each_chains_own_first_edit(queue: Site) -> None:
+@pytest.fixture(scope="module")
+def edited(queue: Site) -> Site:
+    """The queue site after a geometry-only move of the reception counter: an edited world to generate on."""
     from arena_simulation_setup.generative.flowedit.edit import apply
+
+    return apply(queue, "move", "obj:reception_counter_1", {"x": 3.0})
+
+
+def test_controls_on_an_edited_world_follow_each_chains_own_first_edit(edited: Site) -> None:
     from arena_simulation_setup.generative.flowedit.generate import Control, controls
 
-    base = apply(queue, "move", "obj:reception_counter_1", {"x": 3.0})
-    chains = generate(base, seed=0, types=[EditType.MOVE, EditType.INSERT])
+    chains = generate(edited, seed=0, types=[EditType.MOVE, EditType.INSERT])
     assert [c.records[0]["function_carrying"] for c in chains] == [True, True]
     for chain in chains:
         first = next(e for e in chain.site.edits if e.id == chain.records[0]["id"])
-        made = controls(base, chain)
+        made = controls(edited, chain)
         assert made
         for kind, control in made:
-            (edit,) = control.edits[len(base.edits) :]
+            (edit,) = control.edits[len(edited.edits) :]
             assert edit.target == (first.target if kind is Control.MOVED_WITHOUT_DEMAND else f"{first.target}_inert")
             assert (edit.params["x"], edit.params["y"]) == (first.params["x"], first.params["y"])
+
+
+def test_the_manifest_lists_only_a_controls_own_edits_on_an_edited_world(edited: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.generate import controls
+
+    chains = generate(edited, seed=0, types=[EditType.MOVE])
+    made = {chain.site.name: controls(edited, chain) for chain in chains}
+    manifest = dump_manifest(edited, chains, 0, 1, 1, chain_controls=made)
+    listed = [(c["world"], c["ids"]) for entry in manifest["chains"] for c in entry["controls"]]
+    assert listed and listed == [(control.name, [control.edits[-1].id]) for chain in chains for _, control in made[chain.site.name]]
 
 
 def test_controls_are_saved_and_listed_in_the_manifest(queue: Site) -> None:

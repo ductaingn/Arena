@@ -133,7 +133,7 @@ Only objects with a need count as demand: in PEDS only needs send people to an o
 
 Only a chain's first edit has controls. An object without `humansim.type` takes its type from its asset's `annotation.yaml` at runtime, so the inert copy, and the moved model of `moved_without_demand`, may still be a target by that name.
 
-The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type`, `target`, `id`, `function_carrying`, `scope`), its saved path and its controls:
+The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type`, `target`, `id`, `function_carrying`, `scope`), its saved path and its controls, each with the `ids` of its own edits (`edits.yaml` keeps the full history):
 
 ```yaml
 format: flowedit-generated/1

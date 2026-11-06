@@ -794,6 +794,6 @@ def dump_manifest(site: Site, chains: Sequence[Generated], seed: int, per_type: 
             entry["path"] = str(worlds[chain.site.name])
         made = (chain_controls or {}).get(chain.site.name) or []
         if made:
-            entry["controls"] = [{"kind": kind.value, "world": control.name, "ids": [e.id for e in control.edits], **({"path": str(worlds[control.name])} if worlds is not None and control.name in worlds else {})} for kind, control in made]
+            entry["controls"] = [{"kind": kind.value, "world": control.name, "ids": [e.id for e in control.edits[len(site.edits) :]], **({"path": str(worlds[control.name])} if worlds is not None and control.name in worlds else {})} for kind, control in made]
         entries.append(entry)
     return {"format": MANIFEST_FORMAT, "generator_version": GENERATOR_VERSION, "base": site.name, "scenario": site.scenario, "seed": seed, "per_type": per_type, "steps": steps, "fields": list(FIELDS), "chains": entries}
