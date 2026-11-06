@@ -316,3 +316,28 @@ def test_insert_refuses_a_dock_of_fewer_than_three_points(queue: Site) -> None:
     _, model, back, dock = DOCKED[0]
     with pytest.raises(ValueError, match="at least 3 points"):
         apply(queue, "insert", "obj:charger_1", _docked(model, back, dock[:2]))
+
+
+@pytest.mark.parametrize(("name", "model", "back", "dock"), DOCKED, ids=DOCKED_IDS)
+def test_a_moved_object_takes_its_dock_along_in_its_own_frame(queue: Site, name: str, model: str, back: float, dock: list[list[float]]) -> None:
+    inserted = apply(queue, "insert", f"obj:{name}", _docked(model, back, dock))
+    # to the east wall, the front turned into the room again
+    path = save(apply(inserted, "move", f"obj:{name}", {"x": 25.0 - back, "y": 5.0, "yaw": 3.1416}))
+    assert _saved_objects(path)[name]["dock"] == dock
+    assert _dock_in_level(open_site(path), name) == _posed(25.0 - back, 5.0, 3.1416, dock)
+
+
+def test_a_locker_moved_without_its_demand_keeps_its_dock(queue: Site) -> None:
+    name, model, back, dock = DOCKED[1]
+    inserted = apply(queue, "insert", f"obj:{name}", {**_docked(model, back, dock), "type": "parcel_locker", "capacity": 1, "dwell": 30.0})
+    moved = apply(inserted, "move", f"obj:{name}", {"x": 22.0, "leave_demand": True})
+    assert _dock_in_level(moved, name) == _posed(22.0, back, FACING_NORTH, dock)
+    assert _dock_in_level(moved, f"{name}_demand") is None  # robots dock at the model, people queue at the old spot
+
+
+@pytest.mark.parametrize(("name", "model", "back", "dock"), DOCKED, ids=DOCKED_IDS)
+def test_a_removed_object_takes_its_dock_along(queue: Site, name: str, model: str, back: float, dock: list[list[float]]) -> None:
+    inserted = apply(queue, "insert", f"obj:{name}", _docked(model, back, dock))
+    path = save(apply(inserted, "remove", f"obj:{name}"))
+    assert name not in _saved_objects(path)
+    assert name not in open_site(path).world.levels["0"].zone_ref_names()
