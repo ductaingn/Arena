@@ -213,6 +213,17 @@ def _flowedit(args: Sequence[str]) -> list[str]:
     return [sys.executable, "-m", "arena_simulation_setup.generative.flowedit.cli", *args]
 
 
+def regenerate_worlds(doc: Mapping[str, Any], manifests: Path, log=print) -> None:  # noqa: ANN001 - a print-like callable
+    """Make the split's edited worlds again with `flowedit generate`, its manifests under `manifests`, and check every
+    listed name came out: a name the generator no longer makes would not resolve at run time."""
+    manifests.mkdir(parents=True, exist_ok=True)
+    for base, source in doc["sources"].items():
+        log(f"generating the edited worlds of {base}")
+        manifest = manifests / f"{base}.manifest.yaml"
+        subprocess.run(_flowedit(generate_argv(base, source, manifest)), check=True, stdout=subprocess.DEVNULL)
+        verify(doc, base, yaml.safe_load(manifest.read_text()) or {})
+
+
 def sweep(
     doc: Mapping[str, Any],
     out: Path,
@@ -233,11 +244,7 @@ def sweep(
     logs = out / "_sweep"
     logs.mkdir(parents=True, exist_ok=True)
     if regenerate:
-        for base, source in doc["sources"].items():
-            log(f"generating the edited worlds of {base}")
-            manifest = logs / f"{base}.manifest.yaml"
-            subprocess.run(_flowedit(generate_argv(base, source, manifest)), check=True, stdout=subprocess.DEVNULL)
-            verify(doc, base, yaml.safe_load(manifest.read_text()) or {})
+        regenerate_worlds(doc, logs, log)
     from . import settings as S
     from .run import done, scenario_name
 
@@ -281,4 +288,4 @@ def sweep(
     return counts
 
 
-__all__ = ["PARTITIONS", "SPLIT_FORMAT", "Job", "base_of", "check", "crowd", "generate_argv", "jobs", "load", "seeds_of", "sweep", "verify"]
+__all__ = ["PARTITIONS", "SPLIT_FORMAT", "Job", "base_of", "check", "crowd", "generate_argv", "jobs", "load", "regenerate_worlds", "seeds_of", "sweep", "verify"]
