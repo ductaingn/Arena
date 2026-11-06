@@ -116,7 +116,7 @@ edits:
 | Type | Target | Params drawn |
 |---|---|---|
 | `move` | an object on the floor, one with a need (`satisfies`) first | a spot in its own room 0.5-3 m away (`scope: local`, 30 %), else in another room of its level (`scope: room`) |
-| `insert` | `obj:gen_<model>_<n>`, a copy of an object on the floor, one with a need first | a spot in any room of its level (`scope: room`), the source's demand copied (service, needs, dwell) |
+| `insert` | `obj:gen_<model>_<n>`, a copy of an object on the floor, one with a need first | a spot in any room of its level (`scope: room`), the source's demand (service, needs, dwell) and `dock` copied |
 | `remove` | an object, one with a need first | none |
 | `function` | an object with a need | `capacity`: a new value in the type's range (`CAPACITY`), objects whose type others share first, none with capacity 0. Or `dwell`: a new mean in the type's range (`DWELL_S`, 3-20 s for dispensers), the authored spread scaled to it, only on the sole object for its need |
 | `access` | a door whose rooms keep another door, a gated door, or a schedule with a regime | lock a door; unlock or ungate a gated one; a schedule window |
@@ -128,7 +128,7 @@ Only objects with a need count as demand: in PEDS only needs send people to an o
 
 | Control | Edit | Result |
 |---|---|---|
-| `inert_object` | `insert obj:<name>_inert` (move or insert) | the same model without demand at the edit's spot, the original left in place |
+| `inert_object` | `insert obj:<name>_inert` (move or insert) | the same model and `dock` without demand at the edit's spot, the original left in place |
 | `moved_without_demand` | `move obj:<name>` with `leave_demand: true` (move only) | the model at the edit's spot, its demand at the old spot on `obj:<name>_demand` |
 
 Only a chain's first edit has controls. An object without `humansim.type` takes its type from its asset's `annotation.yaml` at runtime, so the inert copy, and the moved model of `moved_without_demand`, may still be a target by that name.
@@ -137,7 +137,7 @@ The manifest (`flowedit-generated/1`) names each chain's world, its edits (`type
 
 ```yaml
 format: flowedit-generated/1
-generator_version: 4
+generator_version: 5
 base: hospital_1
 scenario: queue
 seed: 0
