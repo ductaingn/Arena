@@ -764,6 +764,8 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
                 )
             if not known.spawned:
                 to_register.append(known)
+        # a target-only object (empty model) lives in the human simulator alone
+        to_move = [obstacle for obstacle in to_move if not obstacle.target_only]
         if to_move:
             futures.append(self._simulator.move_objects(to_move))
 
@@ -778,7 +780,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
             known.obstacle = obstacle
             known.spawned = True
 
-            if known.layer == ObstacleLayer.UNUSED:
+            if known.layer == ObstacleLayer.UNUSED and not known.obstacle.target_only:
                 to_spawn.append(known.obstacle)
             known.layer = layer
 
@@ -1199,7 +1201,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
 
         if static:
             futures.append(self._remove_obstacles_impl(static))
-        futures.append(self._simulator.delete_objects(static))
+        futures.append(self._simulator.delete_objects([obstacle for obstacle in static if not obstacle.target_only]))
         futures.append(self._simulator.pedestrian_delete(dynamic))
         await asyncio.gather(*futures)
 

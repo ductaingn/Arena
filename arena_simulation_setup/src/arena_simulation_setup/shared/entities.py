@@ -238,6 +238,11 @@ class Obstacle(Entity):
         """The dock in the frame of the object's pose, None without one."""
         return None if self.dock is None else [self.pose * corner for corner in self.dock]
 
+    @property
+    def target_only(self) -> bool:
+        """An object with an empty `model` is only a HumanSim target with its `humansim:` demand: no simulator body, no obstacle."""
+        return not self.model.name
+
     async def _corners(self) -> list[Position] | None:
         try:
             view = await self.model.resolve()
