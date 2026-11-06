@@ -1075,12 +1075,20 @@ inner radius is at least twice the planner's goal tolerance (1.2 x 1.0 m
 for a jackal under nav2). A scenario object with `dock:` is refused: goto
 targets resolve on the world's levels.
 
+A docked object with `charge_power_w` is a charger. While `robot in <object>`
+holds, the runtime sends that power to the robot's power publisher
+(`<robot_ns>/power_publisher/charge_power`, latched), which charges the
+battery with it less the robot's own draw, up to `battery_capacity_wh`. Leaving
+the dock sends 0 W. The energy the robot consumes, and so its cost of
+transport, counts the same with or without charging.
+
 ```yaml
 objects:
 - name: charger_1
   model: equipment_robot_charger_a01
   pose: [12.0, 3.0, 3.1416]
   dock: [[0.4, -0.5], [1.4, -0.5], [1.4, 0.5], [0.4, 0.5]]   # 1 m square off the +x face
+  charge_power_w: 1620.0   # a 270 Wh jackal battery in about 10 min
 ```
 
 For HumanSim (arena_humansim) pedestrians include an `agent:` block. The

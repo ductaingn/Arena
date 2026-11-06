@@ -135,6 +135,7 @@ class EnvNode(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleNode, m
         self._sound_levels: dict[str, float] = {}
         self._semantic_names: dict[str, str] = {}
         self._judge_zones: dict = {}
+        self._chargers: dict[str, float] = {}
         self._judge_walls: WallGrid | None = None
         self._known_subjects: set[str] = set()
         self._sample = Sample(t=0.0)
@@ -758,6 +759,7 @@ class EnvNode(ArenaMixinNode, SafeCallbackNode, rclpy.lifecycle.LifecycleNode, m
             judged = self._sample.robots.get(manager.name)
             if judged is not None and manager.runner.active is not None:
                 manager.publish_task_pose(Pose(Position(judged[0], judged[1]), Orientation.from_yaw(judged[2])))
+            manager.publish_charge_power(self._sample, self._judge_zones, self._chargers)
         transitions = await asyncio.gather(*(manager.tick(self._sample, self._judge_zones) for manager in managers))
         if any(manager.runner.changed for manager in managers):
             for manager in managers:

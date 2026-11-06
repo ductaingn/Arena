@@ -662,7 +662,9 @@ class EpisodeNode(EnvNode):
                 await self._reset_episode(record, clock)
             finally:
                 compacted = self._world_manager.world_compacted()
-                self._judge_zones = zone_polygons(authored_statics(compacted))
+                statics = authored_statics(compacted)
+                self._judge_zones = zone_polygons(statics)
+                self._chargers = {entity.name: entity.charge_power_w for entity in statics.objects if entity.charge_power_w is not None}
                 self._judge_walls = self._wall_grid(compacted)
                 for manager in self._robots_manager.managers.values():
                     manager.set_episode_conditions(self._episode_conditions)

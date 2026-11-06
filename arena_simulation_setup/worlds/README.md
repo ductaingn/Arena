@@ -44,7 +44,7 @@ as format 2, see [AUTHORING.md](../AUTHORING.md#format-1-worlds).
 | level | `elevators` | see [Elevator fields](#elevator-fields) |
 | level | `stairs` | stairs up from this level, see [Stairs fields](#stairs-fields) |
 | level | `escalators` | escalators up from this level, see [Stairs fields](#stairs-fields) |
-| level | `objects` | static obstacles, the scenario `objects:` schema plus `dock` (a polygon in the object frame that makes the object a robot goto target, see [AUTHORING.md](../AUTHORING.md#4-add-a-scenario)) |
+| level | `objects` | static obstacles, the scenario `objects:` schema plus `dock` (a polygon in the object frame that makes the object a robot goto target) and `charge_power_w` (the power in W a robot in that dock charges with), see [AUTHORING.md](../AUTHORING.md#4-add-a-scenario) |
 | level | `humans` | pedestrians, the scenario `humans:` schema |
 | level | `lights` | fixtures and ambient lights, see [AUTHORING.md](../AUTHORING.md#lights) |
 | level | `sounds` | standalone sounds, see [AUTHORING.md](../AUTHORING.md#m2-kinds-params-and-timelines) |
