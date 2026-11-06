@@ -594,9 +594,10 @@ class RobotManager(NodeInterface):
         corners = world.lookup_zone_polygon(phase.target)
         if corners is None:
             return phase
+        outline = shapely.Polygon([(corner.x, corner.y) for corner in corners])
         docked = next((entity for entity in world.objects if entity.name == phase.target and entity.dock is not None), None)
         if docked is not None or any(zone.name == phase.target for zone in world.zones):
-            area = shapely.Polygon([(corner.x, corner.y) for corner in corners])
+            area = outline
             if docked is not None:
                 # away from the dock's edges, so a planner's goal tolerance cannot stop the robot outside it
                 deepest = polylabel(area)
@@ -610,7 +611,7 @@ class RobotManager(NodeInterface):
         if docked is None:
             return attrs.evolve(phase, pose=Pose(position=position, orientation=Orientation.identity()))
         origin = docked.pose.position
-        if shapely.Polygon([(corner.x, corner.y) for corner in corners]).covers(shapely.Point(origin.x, origin.y)):
+        if outline.covers(shapely.Point(origin.x, origin.y)):
             # the robot may stand on the origin itself, where no direction faces the object
             facing = _front_yaw(docked)
         else:
