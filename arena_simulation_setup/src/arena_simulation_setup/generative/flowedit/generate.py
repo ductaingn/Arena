@@ -47,8 +47,6 @@ EXCLUDED_ZONES = ("stair", "elevator", "lift", "shaft")
 FLOOR_HEIGHT_M = 0.05
 #: Suffix of the `inert_object` control's copy.
 INERT_SUFFIX = "_inert"
-#: Angle of a model's annotated front (`face` in annotation.yaml) in its own frame; a model without one faces +x.
-FACE_ANGLE = {"+x": 0.0, "+y": math.pi / 2, "-x": math.pi, "-y": -math.pi / 2}
 #: A wall running along a zone edge at most this far (m) off the edge's line stands behind that part of the edge, and objects go against it.
 WALL_SNAP_M = 0.3
 #: Most a wall may turn away from a zone edge's direction (rad) and still run along it.
@@ -196,9 +194,33 @@ def footprint(root: Path, model: str, x: float, y: float, yaw: float) -> shapely
     return shapely.affinity.translate(shapely.affinity.rotate(local, yaw, origin=(0, 0), use_radians=True), xoff=x, yoff=y)
 
 
+def face_front(face: object) -> float | None:
+    """The angle in rad, in the model's frame, of an annotated `face` (an arena_assets `Face` value or a legacy angle),
+    None when it names no face. The same rule as the runtime's `front_angle` (arena_runtime `humans/support.py`), which
+    turns a world object so people queue at that front."""
+    from arena_assets.impl import Face
+
+    def front(f: Face) -> float:
+        return math.remainder(math.radians(f.angle + 180.0), math.tau)
+
+    if isinstance(face, str):
+        try:
+            return front(Face(face))
+        except ValueError:
+            try:
+                face = float(face)
+            except ValueError:
+                return None
+    if isinstance(face, (int, float)) and not isinstance(face, bool):
+        return next((front(f) for f in Face if f.angle == float(face)), None)
+    return None
+
+
 def front_angle(root: Path, model: str) -> float:
-    """The angle of `model`'s annotated front in its own frame, once resolved (`resolve_footprints`), +x without one."""
-    return FACE_ANGLE.get(_FACES.get((root, model)) or "+x", 0.0)
+    """The angle, in `model`'s own frame, of the side people queue at and use it from, once resolved (`resolve_footprints`):
+    its annotated front, else pi. The runtime keeps the yaw of an object without a known `face` and queues behind it."""
+    front = face_front(_FACES.get((root, model)))
+    return math.pi if front is None else front
 
 
 def allowed_zones(level: Level) -> list[Zone]:
