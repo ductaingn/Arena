@@ -482,8 +482,11 @@ are what Arena sends it.
   mechanism moves every door on every tick.
 - Geometry: wall segments and obstacle footprints are static outlines, sent in
   one call per spawn. Doors are boxes behind the four mechanism primitives,
-  pedestrians are discs fed by `pedestrian_update`. Stairs steps and treads are
-  boxes like any other, so a planar robot cannot climb them.
+  pedestrians are discs fed by `pedestrian_update`, each of the pedestrian's own
+  `radius` (`PED_RADIUS` while unknown, kept by updates without one); the server
+  sizes a disc when it first sees it, so a resized disc is removed and added
+  again. Stairs steps and treads are boxes like any other, so a planar robot
+  cannot climb them.
 - Levels: floors define level slabs. A robot collides and casts rays only
   against the level containing its z. The shipped multi-level worlds lay their
   levels side by side in xy at one z, so an elevator ride there is an xy

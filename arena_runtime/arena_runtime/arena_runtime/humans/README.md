@@ -51,7 +51,7 @@ specialized teleport semantics (e.g. resetting an internal agent list).
 
 | Method | Signature |
 | --- | --- |
-| `pedestrian_discs()` | `() -> Iterable[tuple[str, tuple[float, float], float]]` (sync, reads `_ped_positions_xy`, radius is `PED_RADIUS`) |
+| `pedestrian_discs()` | `() -> Iterable[tuple[str, tuple[float, float], float]]` (sync, the latest `arena_peds` positions, each disc the pedestrian's own `radius`, `PED_RADIUS` where that is 0) |
 | `pedestrian_clips()` | `() -> Mapping[str, frozenset[str]]` (sync, the gesture clips each ped is playing, from the same `arena_peds` message) |
 | `pedestrian_teleport(destinations)` | `(Mapping[str, tuple[float, float]]) -> bool` (async, dispatches via `relay_pedestrian_update`, `ArenaHumanSimulator` teleports in the engine instead, then sends each moved ped its next itinerary leg and the `teleported` stimulus) |
 | `elevator_doors_changed(doors)` | `(Mapping[str, bool]) -> None` (async) |
