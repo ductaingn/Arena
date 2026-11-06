@@ -845,6 +845,9 @@ class EpisodeNode(EnvNode):
                     ),
                     return_exceptions=True,
                 )
+                robot_conf = self.conf.Robot
+                for manager in self._robots_manager.managers.values():
+                    manager.publish_soc(manager.initial_soc(self.conf.General.RNG, robot_conf.BATTERY_SOC_MIN.value, robot_conf.BATTERY_SOC_MAX.value))
                 clock.lap("robot_reset")
                 reasons: list[str] = []
                 for name, outcome in zip(self._robots_manager.managers, robot_outcomes, strict=True):

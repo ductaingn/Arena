@@ -1083,7 +1083,10 @@ battery with it less the robot's own draw, up to `battery_capacity_wh`. A
 charger charges one robot at a time, the first one parked in its dock, until
 it moves or leaves; another robot in the same dock gets 0 W meanwhile, and so
 does a robot driving through. The energy the robot consumes, and so its cost
-of transport, counts the same with or without charging.
+of transport, counts the same with or without charging. Each robot starts
+every episode with a charge drawn per episode seed and robot name between
+`task.episode.battery.soc.min` and `task.episode.battery.soc.max` (40 to
+100 %), sent to `<robot_ns>/power_publisher/soc_percent`.
 
 ```yaml
 objects:

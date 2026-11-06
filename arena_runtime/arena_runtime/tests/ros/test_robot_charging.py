@@ -1,4 +1,4 @@
-"""A charger charges the first robot parked in its dock with its power, 0 W for any other robot."""
+"""A charger charges the first robot parked in its dock with its power, and each robot starts an episode with a charge drawn per seed and name."""
 
 from __future__ import annotations
 
@@ -12,11 +12,13 @@ try:
     import rclpy
     import rclpy.node
     import std_msgs.msg
+    from arena_rclpy_mixins.shared import Namespace
     from arena_simulation_setup.shared import Obstacle
     from arena_simulation_setup.shared.judge import Sample, Zones, zone_polygons
     from arena_simulation_setup.tree.World import Level
     from arena_simulation_setup.utils.geometry import Orientation, Pose, Position
 
+    from arena_runtime.env.constants.rng import EpisodeRng
     from arena_runtime.env.robot_manager.charging import PARK_TIME, Chargers
     from arena_runtime.env.robot_manager.robot_manager import _LATCHED, RobotManager
 except ImportError:
@@ -89,3 +91,33 @@ def test_the_charge_power_goes_out_on_change() -> None:
         assert received == [1620.0, 0.0]
     finally:
         node.destroy_node()
+
+
+def _manager_in_env(env: int, name: str) -> RobotManager:
+    manager = RobotManager.__new__(RobotManager)
+    manager._namespace = Namespace(f"/arena/env_{env}/arena_env_node")
+    manager._robot = SimpleNamespace(name=name)
+    return manager
+
+
+def _rng(seed: int) -> EpisodeRng:
+    rng = EpisodeRng()
+    rng.reseed(seed)
+    return rng
+
+
+def test_the_initial_charge_is_drawn_per_seed_and_robot_name_whatever_the_env_index() -> None:
+    names = ("jackal", "jackal_1", "jackal_2", "jackal_3")
+    socs = {(seed, name): _manager_in_env(0, name).initial_soc(_rng(seed), 40.0, 100.0) for seed in range(1, 11) for name in names}
+    assert all(40.0 <= soc <= 100.0 for soc in socs.values())
+    assert len(set(socs.values())) == len(socs)
+    for env in (1, 7):
+        assert _manager_in_env(env, "jackal").namespace == f"/arena/env_{env}/arena_env_node/jackal"
+        assert _manager_in_env(env, "jackal").initial_soc(_rng(3), 40.0, 100.0) == socs[(3, "jackal")]
+
+
+def test_the_initial_charge_ignores_the_episodes_other_draws() -> None:
+    rng = _rng(3)
+    rng.stream("robots", "target", "jackal").uniform()
+    rng.stream("robot-adapter", "jackal").uniform()
+    assert _manager_in_env(0, "jackal").initial_soc(rng, 40.0, 100.0) == _manager_in_env(0, "jackal").initial_soc(_rng(3), 40.0, 100.0)

@@ -45,6 +45,7 @@ if typing.TYPE_CHECKING:
     from arena_simulation_setup.shared.judge import Sample, Zones
 
     from arena_runtime.env.adapters import Adapter, ResetContext
+    from arena_runtime.env.constants.rng import EpisodeRng
     from arena_runtime.env.request import ElevatorRidePhase, GoToPhase, TaskKind, TaskPhase, TaskRequest
 
 
@@ -316,6 +317,7 @@ class RobotManager(NodeInterface):
         self._stop_pub = self.node.create_publisher(geometry_msgs.msg.Twist, str(self.namespace("cmd_vel")), 1)
         self._task_pose_pub = self.node.create_publisher(geometry_msgs.msg.PoseStamped, str(self.namespace("task_pose")), 10)
         self._charge_pub = self.node.create_publisher(std_msgs.msg.Float64, str(self.namespace("power_publisher", "charge_power")), _LATCHED)
+        self._soc_pub = self.node.create_publisher(std_msgs.msg.Float64, str(self.namespace("power_publisher", "soc_percent")), _LATCHED)
         self._goal_pub = self.node.create_publisher(
             geometry_msgs.msg.PoseStamped,
             _gen_goal_topic,
@@ -435,6 +437,14 @@ class RobotManager(NodeInterface):
         if power != self._charge_power_w:
             self._charge_power_w = power
             self._charge_pub.publish(std_msgs.msg.Float64(data=power))
+
+    def initial_soc(self, rng: EpisodeRng, low: float, high: float) -> float:
+        """Battery charge in percent the robot starts an episode with, from the episode seed and its bare name, so no env index changes it."""
+        return float(rng.stream("robots", "soc", self.name).uniform(low, high))
+
+    def publish_soc(self, soc: float) -> None:
+        """Set the battery charge in percent on the robot's power publisher."""
+        self._soc_pub.publish(std_msgs.msg.Float64(data=soc))
 
     def set_episode_conditions(self, conditions: Sequence[EpisodeCondition]) -> None:
         self._runner.set_episode_conditions(conditions)
