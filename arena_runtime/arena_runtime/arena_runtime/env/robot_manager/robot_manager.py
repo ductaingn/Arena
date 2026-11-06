@@ -442,6 +442,8 @@ class RobotManager(NodeInterface):
 
     def initial_soc(self, rng: EpisodeRng, low: float, high: float) -> float:
         """Battery charge in percent the robot starts an episode with, from the episode seed and its bare name, so no env index changes it."""
+        if low > high:
+            raise ValueError(f"task.episode.battery.soc.min ({low}) is above task.episode.battery.soc.max ({high})")
         return float(rng.stream("robots", "soc", self.name).uniform(low, high))
 
     def publish_soc(self, soc: float) -> None:

@@ -12,6 +12,7 @@ try:
     import rclpy
     import rclpy.node
     import std_msgs.msg
+    from arena_rclpy_mixins.ROSParamServer import ROSParamServer
     from arena_rclpy_mixins.shared import Namespace
     from arena_simulation_setup.shared import Obstacle
     from arena_simulation_setup.shared.judge import Sample, Zones, zone_polygons
@@ -19,6 +20,7 @@ try:
     from arena_simulation_setup.utils.geometry import Orientation, Pose, Position
 
     from arena_runtime.env.constants.rng import EpisodeRng
+    from arena_runtime.env.constants.runtime import Configuration
     from arena_runtime.env.robot_manager.charging import PARK_TIME, Chargers
     from arena_runtime.env.robot_manager.robot_manager import _LATCHED, RobotManager
 except ImportError:
@@ -121,3 +123,28 @@ def test_the_initial_charge_ignores_the_episodes_other_draws() -> None:
     rng.stream("robots", "target", "jackal").uniform()
     rng.stream("robot-adapter", "jackal").uniform()
     assert _manager_in_env(0, "jackal").initial_soc(rng, 40.0, 100.0) == _manager_in_env(0, "jackal").initial_soc(_rng(3), 40.0, 100.0)
+
+
+def _soc_range(**soc: float) -> tuple[float, float]:
+    node = ROSParamServer("test_battery_soc", parameter_overrides=[rclpy.Parameter("world", value="map_empty"), *(rclpy.Parameter(f"task.episode.battery.soc.{key}", value=value) for key, value in soc.items())])
+    try:
+        robot = Configuration(node).Robot
+        return robot.BATTERY_SOC_MIN.value, robot.BATTERY_SOC_MAX.value
+    finally:
+        node.destroy_node()
+
+
+def test_the_start_charge_range_defaults_to_40_to_100_percent_and_takes_launch_values() -> None:
+    assert _soc_range() == (40.0, 100.0)
+    assert _soc_range(min=0.0, max=55.5) == (0.0, 55.5)
+
+
+@pytest.mark.parametrize(("key", "value"), [("min", -1.0), ("max", 150.0)])
+def test_a_start_charge_bound_outside_0_to_100_percent_is_refused(key: str, value: float) -> None:
+    with pytest.raises(RuntimeError, match=f"task.episode.battery.soc.{key} failed"):
+        _soc_range(**{key: value})
+
+
+def test_a_start_charge_range_with_its_min_above_its_max_is_refused() -> None:
+    with pytest.raises(ValueError, match=r"task.episode.battery.soc.min \(80.0\) is above task.episode.battery.soc.max \(40.0\)"):
+        _manager_in_env(0, "jackal").initial_soc(_rng(3), 80.0, 40.0)

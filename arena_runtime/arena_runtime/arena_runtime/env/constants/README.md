@@ -79,8 +79,8 @@ Every `task.episode.*` param is also a launch arg (empty = node default), listed
 | `GOAL_TOLERANCE_ANGLE` | `task.episode.goto_pose.tolerance.angle` | 30 degrees (in radians) | default `GoToPhase.tolerance_angle` |
 | `GOAL_HOLD_TIME` | `task.episode.goto_pose.hold_time` | `0.0` | sim seconds, default `GoToPhase.hold_time` |
 | `GOAL_SIGNAL` | `task.episode.goto_pose.signal` | `''` | default `GoToPhase.signal`, empty = Arena judges arrival |
-| `BATTERY_SOC_MIN` | `task.episode.battery.soc.min` | `40.0` | percent, lowest battery charge a robot starts an episode with |
-| `BATTERY_SOC_MAX` | `task.episode.battery.soc.max` | `100.0` | percent, highest; each robot draws its own from `RNG.stream("robots", "soc", <robot name>)` |
+| `BATTERY_SOC_MIN` | `task.episode.battery.soc.min` | `40.0` | percent (0 to 100), lowest battery charge a robot starts an episode with |
+| `BATTERY_SOC_MAX` | `task.episode.battery.soc.max` | `100.0` | percent (0 to 100), highest, at least `soc.min` (else the episode reset fails); each robot draws its own from `RNG.stream("robots", "soc", <robot name>)` |
 | `SPAWN_ROBOT_SAFE_DIST` | `task.episode.spawn.robot_clearance` | `0.25` | metres |
 | `TIMEOUT` | `task.episode.timeout` | `-1` | parsed to `inf` when negative; sim seconds since episode reset, past which the episode ends FAILED with info `"timeout"` |
 | `MOBILE_ADAPTER` | `robot.mobile_adapter` | `'nav2'` | default mobile-cap adapter kind, overridden per robot via scenario `mobile:` |
