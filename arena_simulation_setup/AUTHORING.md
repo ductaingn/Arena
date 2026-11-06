@@ -1077,12 +1077,29 @@ inner radius is at least twice the planner's goal tolerance (1.2 x 1.0 m
 for a jackal under nav2). A scenario object with `dock:` is refused: goto
 targets resolve on the world's levels.
 
+A docked object with `charge_power_w` is a charger. Once a robot has stood
+still in its dock for a second (within the judge's park drift and turn,
+`PARK_DRIFT_M` and `PARK_TURN_RAD` in
+[`shared/judge.py`](src/arena_simulation_setup/shared/judge.py)), the runtime
+sends that power to the robot's power publisher
+(`<robot_ns>/power_publisher/charge_power`, latched), which charges the
+battery with it less the robot's own draw, up to `battery_capacity_wh`. A
+charger charges one robot at a time, the first one parked in its dock, until
+it moves or leaves; another robot in the same dock gets 0 W meanwhile, and so
+does a robot driving through. The energy the robot consumes, and so its cost
+of transport, counts the same with or without charging. Each robot starts
+every episode with a charge drawn per episode seed and robot name between
+`task.episode.battery.soc.min` and `task.episode.battery.soc.max` (40 to
+100 %; each within 0 to 100, min at most max), sent to
+`<robot_ns>/power_publisher/soc_percent`.
+
 ```yaml
 objects:
 - name: charger_1
   model: equipment_robot_charger_a01
   pose: [12.0, 3.0, 3.1416]
   dock: [[0.4, -0.5], [1.4, -0.5], [1.4, 0.5], [0.4, 0.5]]   # 1 m square off the +x face
+  charge_power_w: 1620.0   # a 270 Wh jackal battery in about 10 min
 ```
 
 For HumanSim (arena_humansim) pedestrians include an `agent:` block. The

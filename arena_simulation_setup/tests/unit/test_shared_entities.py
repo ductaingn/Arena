@@ -296,6 +296,26 @@ def test_obstacle_dock_needs_three_points():
         Obstacle.parse({"name": "charger_1", "model": "charger", "pose": [0.0, 0.0, 0.0], "dock": [[0.5, -0.5], [1.5, -0.5]]})
 
 
+def test_obstacle_charge_power_makes_a_docked_object_a_charger_and_round_trips():
+    base = {"name": "charger_1", "model": "charger", "pose": [0.0, 0.0, 0.0]}
+    charger = Obstacle.parse({**base, "dock": [[0.5, -0.5], [1.5, -0.5], [1.5, 0.5]], "charge_power_w": 1620})
+    assert charger.charge_power_w == 1620.0
+    assert Obstacle.parse(charger.serialize()).charge_power_w == 1620.0
+    assert "charge_power_w" not in Obstacle.parse(base).serialize()
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"charge_power_w": 1620.0}, "charge_power_w charges a robot standing in the dock, but 'charger_1' has no dock"),
+        ({"charge_power_w": 0.0, "dock": [[0.5, -0.5], [1.5, -0.5], [1.5, 0.5]]}, "charge_power_w is the power in W a robot in the dock charges with, above 0, got 0.0"),
+    ],
+)
+def test_obstacle_charge_power_needs_a_dock_and_a_power_above_zero(extra, message):
+    with pytest.raises(ValueError, match=message):
+        Obstacle.parse({"name": "charger_1", "model": "charger", "pose": [0.0, 0.0, 0.0], **extra})
+
+
 @pytest.mark.parametrize("dock", [5, "charger_bay"])
 def test_obstacle_dock_must_be_a_list_of_points(dock):
     with pytest.raises(ValueError, match="dock is a polygon in the object frame, a list of at least 3 points"):

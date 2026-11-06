@@ -18,9 +18,11 @@ import rclpy
 import rclpy.logging
 import rclpy.node
 import rclpy.publisher
+import rclpy.qos
 import rclpy.time
 import rclpy.timer
 import shapely
+import std_msgs.msg
 import tf2_ros
 from arena_rclpy_mixins.Async import LaunchHandle
 from arena_rclpy_mixins.shared import FrameNamespace, Namespace
@@ -45,6 +47,7 @@ if typing.TYPE_CHECKING:
     from arena_simulation_setup.shared.judge import Sample, Zones
 
     from arena_runtime.env.adapters import Adapter, ResetContext
+    from arena_runtime.env.constants.rng import EpisodeRng
     from arena_runtime.env.request import ElevatorRidePhase, GoToPhase, TaskKind, TaskPhase, TaskRequest
 
 
@@ -77,6 +80,8 @@ _TELEPORT_POLL = 0.02
 _TELEPORT_ATTEMPTS = 3
 _TELEPORT_TICK_CAP = 5
 _TELEPORT_TICK_WAIT = 0.5
+
+_LATCHED = rclpy.qos.QoSProfile(depth=1, durability=rclpy.qos.DurabilityPolicy.TRANSIENT_LOCAL)
 
 
 def log_level_actions(spec: str) -> list[NodeLogLevelExtension.SetGlobalLogLevelAction]:
@@ -285,6 +290,7 @@ class RobotManager(NodeInterface):
         self._on_collision = None
         self._phase_failure = None
         self._cabin_to_clear = ""
+        self._charge_power_w = 0.0
 
     def bind_abort(self, fn: Callable[[str], None]) -> None:
         self._abort_episode = fn
@@ -320,6 +326,8 @@ class RobotManager(NodeInterface):
 
         self._stop_pub = self.node.create_publisher(geometry_msgs.msg.Twist, str(self.namespace("cmd_vel")), 1)
         self._task_pose_pub = self.node.create_publisher(geometry_msgs.msg.PoseStamped, str(self.namespace("task_pose")), 10)
+        self._charge_pub = self.node.create_publisher(std_msgs.msg.Float64, str(self.namespace("power_publisher", "charge_power")), _LATCHED)
+        self._soc_pub = self.node.create_publisher(std_msgs.msg.Float64, str(self.namespace("power_publisher", "soc_percent")), _LATCHED)
         self._goal_pub = self.node.create_publisher(
             geometry_msgs.msg.PoseStamped,
             _gen_goal_topic,
@@ -433,6 +441,22 @@ class RobotManager(NodeInterface):
         msg.header.stamp = self.node.sim_time.to_msg()
         msg.pose = pose.to_msg()
         self._task_pose_pub.publish(msg)
+
+    def publish_charge_power(self, power: float) -> None:
+        """Send the power in W the robot charges with to its power publisher, on change."""
+        if power != self._charge_power_w:
+            self._charge_power_w = power
+            self._charge_pub.publish(std_msgs.msg.Float64(data=power))
+
+    def initial_soc(self, rng: EpisodeRng, low: float, high: float) -> float:
+        """Battery charge in percent the robot starts an episode with, from the episode seed and its bare name, so no env index changes it."""
+        if low > high:
+            raise ValueError(f"task.episode.battery.soc.min ({low}) is above task.episode.battery.soc.max ({high})")
+        return float(rng.stream("robots", "soc", self.name).uniform(low, high))
+
+    def publish_soc(self, soc: float) -> None:
+        """Set the battery charge in percent on the robot's power publisher."""
+        self._soc_pub.publish(std_msgs.msg.Float64(data=soc))
 
     def set_episode_conditions(self, conditions: Sequence[EpisodeCondition]) -> None:
         self._runner.set_episode_conditions(conditions)
