@@ -16,12 +16,13 @@ from arena_simulation_setup.tree.World.write import to_yaml
 from ..scenario.cli import _writable, world_root
 from ..scenario.materialize import WouldOverwrite
 from . import settings as S
+from . import split as SP
 from .build import build
 from .edit import EDITS, GRAPH, EditType, Site, apply, dump_edits, open_site, save
 from .generate import controls, dump_manifest, generate
 from .read import read, render
 from .read import write as write_scenario
-from .run import RUNS, Edit, default_out, done, prepare, record
+from .run import DURATION_S, RUNS, Edit, default_out, done, prepare, record
 
 MANIFESTS = "flowedit"
 
@@ -205,8 +206,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_sweep(args: argparse.Namespace) -> int:
-    from . import split as SP
-
     doc = SP.load(args.split)
     out = args.out or default_out() / args.split.stem
     parts = args.partition or list(SP.PARTITIONS)
@@ -334,7 +333,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--scale", type=float, default=None, help="scale of populate's per-room count, overriding the settings")
     p.add_argument("--local-planner", default=None, help="HumanSim local planner of every generated type, overriding the settings")
     p.add_argument("--seed", type=int, default=0, help="seed of every crowd draw (default 0)")
-    p.add_argument("--duration", type=float, default=300.0, help="seconds of the run recorded in the tracks (default 300)")
+    p.add_argument("--duration", type=float, default=DURATION_S, help=f"seconds of the run recorded in the tracks (default {DURATION_S:g})")
     p.add_argument("--out", type=Path, default=None, help=f"runs root (default: $ARENA_DATA_DIR/{RUNS})")
     p.add_argument("--launch-arg", action="append", default=[], metavar="KEY:=VALUE", help="an extra `arena launch` argument; repeatable")
     p.add_argument("--startup-timeout", type=float, default=300.0, help="seconds to wait for HumanSim to start recording (default 300)")
@@ -349,7 +348,7 @@ def _parser() -> argparse.ArgumentParser:
         description="generate the split's edited worlds again, then `flowedit run` every world of the chosen partitions once per seed, --jobs launches at a time on their own ROS domains; finished runs are skipped",
     )
     p.add_argument("split", type=Path, help="the split file (see split.py)")
-    p.add_argument("--partition", action="append", choices=["train", "held_out_edits", "held_out_worlds"], default=None, help="a partition to run; repeatable (default: all)")
+    p.add_argument("--partition", action="append", choices=SP.PARTITIONS, default=None, help="a partition to run; repeatable (default: all)")
     p.add_argument("--settings", type=Path, default=None, help="crowd settings YAML of every run, merged over the split's own `settings` (default: those, else the defaults, the training crowd)")
     p.add_argument("--out", type=Path, default=None, help=f"runs root (default: $ARENA_DATA_DIR/{RUNS}/<split name>)")
     p.add_argument("--jobs", type=int, default=1, help="launches at a time (default 1)")
@@ -365,7 +364,7 @@ def _parser() -> argparse.ArgumentParser:
         description="generate the split's edited worlds again, read the crowd into every world at every seed of its partition, and write an arena_evaluation benchmark suite of one stage per world and seed, the stage's episode seed the reader's seed, so an edit stage pairs with its base world's stage at that seed; prints the `arena evaluation benchmark` call",
     )
     p.add_argument("split", type=Path, help="the split file (see split.py)")
-    p.add_argument("--partition", action="append", choices=["train", "held_out_edits", "held_out_worlds"], default=None, help="a partition to write; repeatable (default: all)")
+    p.add_argument("--partition", action="append", choices=SP.PARTITIONS, default=None, help="a partition to write; repeatable (default: all)")
     p.add_argument("--settings", type=Path, default=None, help="crowd settings YAML of every run, merged over the split's own `settings`")
     p.add_argument("--out", type=Path, default=None, help="suite file (default: <imported assets root>/suites/flowedit_<split name>.yaml, where `--suite flowedit_<split name>` finds it)")
     p.add_argument("--robot", default="jackal", help="robot of every stage, parked off the map and unseen (default jackal, the robot of the shipped suites)")

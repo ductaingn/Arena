@@ -27,7 +27,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +41,7 @@ from .read import read
 from .read import write as write_scenario
 
 RUNS = "flowedit_runs"
+DURATION_S = 300.0  # sim seconds a run records unless told otherwise
 RUN_FORMAT = "flowedit-run/1"
 RUN_FILE = "run.yaml"
 TRACKS = "tracks.parquet"
@@ -249,9 +250,7 @@ def names_at(time: Any, agent_id: Any, names: Names) -> Any:  # noqa: ANN401 - n
     if not snapshots:
         return np.full(len(ids), "", dtype=object)
     snap_t = np.array([s for s, _ in snapshots], dtype=float)
-    table = pd.DataFrame(
-        [(k, s, int(i), str(n)) for k, (s, snap) in enumerate(snapshots) for i, n in snap.items()], columns=["k", "t", "agent_id", "name"]
-    ).drop_duplicates(["k", "agent_id"], keep="last")
+    table = pd.DataFrame([(k, s, int(i), str(n)) for k, (s, snap) in enumerate(snapshots) for i, n in snap.items()], columns=["k", "t", "agent_id", "name"]).drop_duplicates(["k", "agent_id"], keep="last")
     k = np.searchsorted(snap_t, t, side="right") - 1
     rows = pd.DataFrame({"k": k, "agent_id": ids}).merge(table.drop(columns="t"), on=["k", "agent_id"], how="left")
     unnamed = np.flatnonzero(rows["name"].isna().to_numpy())
@@ -429,7 +428,7 @@ def record(
     startup_timeout: float = 300.0,
     grace: float = 60.0,
     margin: float = 30.0,
-    log=print,  # noqa: ANN001 - a print-like callable
+    log: Callable[[str], None] = print,
 ) -> Path:
     """Launch the prepared scenario headless with HumanSim recording, stop it after `duration` seconds of frames, and write the run directory.
 
@@ -520,4 +519,4 @@ def default_out() -> Path:
     return Path(data) / RUNS
 
 
-__all__ = ["EDITS", "INTERACTIONS", "RUNS", "Edit", "Extracted", "Prepared", "default_out", "done", "extract", "interaction_rows", "keyed", "launch_command", "names_at", "prepare", "provenance", "record", "scenario_name", "summary", "tracks", "uses"]
+__all__ = ["DURATION_S", "EDITS", "INTERACTIONS", "RUNS", "Edit", "Extracted", "Prepared", "default_out", "done", "extract", "interaction_rows", "keyed", "launch_command", "names_at", "prepare", "provenance", "record", "scenario_name", "summary", "tracks", "uses"]
