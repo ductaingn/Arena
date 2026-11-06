@@ -765,7 +765,7 @@ class Control(enum.StrEnum):
 
 def controls(site: Site, chain: Generated) -> list[tuple[Control, Site]]:
     """The geometry-only controls of a chain's first edit when it carries function, applied to `site`, the chain's base."""
-    first = chain.site.edits[0]
+    first = chain.site.edits[len(site.edits)]
     if not chain.records[0]["function_carrying"] or first.type not in (EditType.MOVE, EditType.INSERT):
         return []
     if first.type is EditType.MOVE:

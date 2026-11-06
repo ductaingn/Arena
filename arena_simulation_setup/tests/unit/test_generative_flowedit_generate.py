@@ -378,6 +378,23 @@ def test_a_function_carrying_insert_gets_only_the_inert_copy(queue: Site) -> Non
     raise AssertionError("no function-carrying insert in 20 seeds")
 
 
+def test_controls_on_an_edited_world_follow_each_chains_own_first_edit(queue: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.edit import apply
+    from arena_simulation_setup.generative.flowedit.generate import Control, controls
+
+    base = apply(queue, "move", "obj:reception_counter_1", {"x": 3.0})
+    chains = generate(base, seed=0, types=[EditType.MOVE, EditType.INSERT])
+    assert [c.records[0]["function_carrying"] for c in chains] == [True, True]
+    for chain in chains:
+        first = next(e for e in chain.site.edits if e.id == chain.records[0]["id"])
+        made = controls(base, chain)
+        assert made
+        for kind, control in made:
+            (edit,) = control.edits[len(base.edits) :]
+            assert edit.target == (first.target if kind is Control.MOVED_WITHOUT_DEMAND else f"{first.target}_inert")
+            assert (edit.params["x"], edit.params["y"]) == (first.params["x"], first.params["y"])
+
+
 def test_controls_are_saved_and_listed_in_the_manifest(queue: Site) -> None:
     from arena_simulation_setup.generative.flowedit.generate import controls
     from arena_simulation_setup.tree.World import WorldIdentifier
