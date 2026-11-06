@@ -79,7 +79,7 @@ Load and save it with `arena_simulation_setup.kg.load` and `write`.
 | Type | Target | Params | Graph | `world.yaml` |
 |---|---|---|---|---|
 | `move` | `obj:<name>` | `x`, `y`, `yaw`, `level` (default: unchanged), `leave_demand: true` (the demand stays at the old spot) | `at`; with `leave_demand` the demand facts, `affords` among them, go to a new `obj:<name>_demand` at the old spot, turned so people queue at the model's front | the pose, for a world object, its height, roll and pitch kept; with `leave_demand` its `humansim:` block keeps only `seats` |
-| `insert` | `obj:<new name>` | `model`, `x`, `y`, `z` (0), `yaw` (0), `level`, and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block |
+| `insert` | `obj:<new name>` | `model`, `x`, `y`, `z` (0), `yaw` (0), `level`, `dock` (where a robot stands to use it, `[[x, y], ...]` in the object frame, see [AUTHORING.md](../../../../AUTHORING.md#4-add-a-scenario)), and any `function` params | entity, `at`, demand | a new world object with its `humansim:` block and `dock` |
 | `remove` | `obj:<name>` | none | the entity and every fact about it | the object, and its `kg.yaml` entity |
 | `function` | `obj:<name>` | `type`, `capacity`, `interaction_radius`, `satisfies: {<need>: amount or null}`, `dwell: seconds, {mean, std, clip_low, clip_high} or null`, `clear: true` (first drop all demand, the formation included) | `serves`, `satisfies`, `dwells` (`from: edit:<id>`), `has_formation` (by `clear`) | the `humansim:` block, for a world object |
 | `access` | `door:<name>` | `locked`, `authorized`, `unlock_on`, or `remove: true` | access facts | the door's `gate` preset (new gates start unlocked) |

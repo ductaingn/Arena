@@ -269,3 +269,50 @@ def test_schedule_access_keeps_remove_out_of_its_preset(queue: Site) -> None:
     timed = apply(queue, "access", "schedule:fire_alarm", {"remove": False, "windows": [{"start": 60, "end": 90}]})
     (params,) = presets(next(s for s in timed.world.schedules if s.name == "fire_alarm").semantics, "schedule")
     assert "remove" not in params and params["windows"] == [{"start": 60, "end": 90}]
+
+
+#: The INFRA elements against the south wall of the waiting area, their front (`face: +x`) turned into the room and their
+#: origin `back` m off the wall: the charger's and the bay's origin is their middle, the parcel locker's a back corner.
+#: The charger and the locker have a 1.2 x 1.0 m jackal dock in front; the waiting bay is a floor marking with no
+#: collider and no bounding box, one slot per object, its dock the slot around its origin.
+DOCKED: list[tuple[str, str, float, list[list[float]]]] = [
+    ("charger_1", "Common/Object/robot_charger", 0.26, [[0.25, -0.5], [1.45, -0.5], [1.45, 0.5], [0.25, 0.5]]),
+    ("locker_1", "Common/Object/parcel_locker", 0.06, [[0.55, 0.02], [1.75, 0.02], [1.75, 1.02], [0.55, 1.02]]),
+    ("bay_1", "Common/Object/waiting_bay", 0.65, [[-0.6, -0.5], [0.6, -0.5], [0.6, 0.5], [-0.6, 0.5]]),
+]
+DOCKED_IDS = [model.rsplit("/", 1)[-1] for _, model, _, _ in DOCKED]
+FACING_NORTH = 1.5708
+
+
+def _docked(model: str, back: float, dock: list[list[float]]) -> dict[str, Any]:
+    return {"model": model, "x": 20.0, "y": back, "yaw": FACING_NORTH, "dock": dock}
+
+
+def _posed(x: float, y: float, yaw: float, dock: list[list[float]]) -> list[tuple[float, float]]:
+    """`dock` turned by `yaw` and moved to `x`, `y`, to the mm."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    return [(round(x + c * px - s * py, 3), round(y + s * px + c * py, 3)) for px, py in dock]
+
+
+def _dock_in_level(site: Site, name: str) -> list[tuple[float, float]] | None:
+    corners = site.world.levels["0"].lookup_zone_polygon(name)
+    return None if corners is None else [(round(c.x, 3), round(c.y, 3)) for c in corners]
+
+
+def _saved_objects(path: Path) -> dict[str, dict[str, Any]]:
+    return {o["name"]: o for o in yaml.safe_load((path / "world.yaml").read_text())["levels"][0]["objects"]}
+
+
+@pytest.mark.parametrize(("name", "model", "back", "dock"), DOCKED, ids=DOCKED_IDS)
+def test_insert_writes_a_dock_that_makes_the_object_a_goto_target(queue: Site, name: str, model: str, back: float, dock: list[list[float]]) -> None:
+    path = save(apply(queue, "insert", f"obj:{name}", _docked(model, back, dock)))
+    assert _saved_objects(path)[name]["dock"] == dock
+    reopened = open_site(path)
+    assert name in reopened.world.levels["0"].zone_ref_names()
+    assert _dock_in_level(reopened, name) == _posed(20.0, back, FACING_NORTH, dock)
+
+
+def test_insert_refuses_a_dock_of_fewer_than_three_points(queue: Site) -> None:
+    _, model, back, dock = DOCKED[0]
+    with pytest.raises(ValueError, match="at least 3 points"):
+        apply(queue, "insert", "obj:charger_1", _docked(model, back, dock[:2]))
