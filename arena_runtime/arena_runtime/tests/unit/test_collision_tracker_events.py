@@ -15,6 +15,7 @@ CRATE = (5.5, 2.5)
 BY_PED = (2.0, 8.2)
 HALF_WIDTH = 0.2078
 PED_RADIUS = 0.3
+WHEELCHAIR_RADIUS = 0.325
 
 
 async def _until(pred: typing.Callable[[], bool], what: str, timeout: float = 20.0) -> None:
@@ -91,13 +92,13 @@ class Stage:
         await _until(lambda: tracker._valid_after is not None, "reset_end to arm the tracker")
         self.armed_ns = tracker._valid_after.nanoseconds
 
-    async def peds(self, tracker, *peds: tuple[str, float, float]) -> None:
+    async def peds(self, tracker, *peds: tuple[str, float, float] | tuple[str, float, float, float]) -> None:
         from arena_people_msgs.msg import Pedestrian, Pedestrians
 
         publisher = self.probe.create_publisher(Pedestrians, "/arena_peds", 10)
         msg = Pedestrians()
-        for name, x, y in peds:
-            ped = Pedestrian(name=name)
+        for name, x, y, *radius in peds:
+            ped = Pedestrian(name=name, radius=radius[0] if radius else 0.0)
             ped.pose.position.x = x
             ped.pose.position.y = y
             ped.pose.orientation.w = 1.0
@@ -304,6 +305,21 @@ def test_pedestrian_just_beyond_its_radius_does_not_collide(on_stage):
         await stage.peds(tracker, ("walker", BY_PED[0], BY_PED[1] + HALF_WIDTH + PED_RADIUS + 0.01))
         stage.place(rm, *BY_PED)
         assert await stage.tick(tracker, received) == []
+
+    on_stage(body)
+
+
+def test_pedestrian_collides_within_its_own_radius_beyond_the_default(on_stage):
+    import arena_robots_msgs.msg
+
+    async def body(stage: Stage):
+        rm, tracker = stage.robot_manager()
+        received = await stage.listen(tracker)
+        await stage.arm(tracker)
+        beyond_default = BY_PED[1] + HALF_WIDTH + PED_RADIUS + 0.01
+        await stage.peds(tracker, ("wheelchair", BY_PED[0], beyond_default, WHEELCHAIR_RADIUS))
+        stage.place(rm, *BY_PED)
+        assert [_event(e) for e in await stage.tick(tracker, received)] == [(arena_robots_msgs.msg.CollisionEvent.KIND_PEDESTRIAN, "wheelchair", 0.0, (BY_PED[0], beyond_default))]
 
     on_stage(body)
 

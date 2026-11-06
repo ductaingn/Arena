@@ -181,7 +181,7 @@ class CollisionTrackerNode(rclpy.node.Node):
             events.append(ev)
 
         for p, px, py in self._pedestrians():
-            if not footprint.intersects(shapely.Point(px, py).buffer(self._default_peds_radius)):
+            if not footprint.intersects(shapely.Point(px, py).buffer(self._radius(p))):
                 continue
             ev = arena_robots_msgs.msg.CollisionEvent()
             ev.kind = arena_robots_msgs.msg.CollisionEvent.KIND_PEDESTRIAN
@@ -210,8 +210,11 @@ class CollisionTrackerNode(rclpy.node.Node):
             out.append((p, px, py))
         return out
 
+    def _radius(self, pedestrian: arena_people_msgs.msg.Pedestrian) -> float:
+        return pedestrian.radius if pedestrian.radius > 0.0 else self._default_peds_radius
+
     def _hits_pedestrian(self, poly: shapely.Polygon) -> bool:
-        return any(poly.intersects(shapely.Point(px, py).buffer(self._default_peds_radius)) for _, px, py in self._pedestrians())
+        return any(poly.intersects(shapely.Point(px, py).buffer(self._radius(p))) for p, px, py in self._pedestrians())
 
     def shutdown(self):
         self.destroy_node()

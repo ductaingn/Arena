@@ -238,6 +238,12 @@ def test_pedestrians_default_gait_fields_when_the_frame_has_none() -> None:
     assert [(p.gait_phase, p.gait_cadence, p.agent_type) for p in peds] == [(0.0, 0.0, ""), (0.0, 0.0, "")]
 
 
+def test_pedestrians_carry_their_agents_radius_and_zero_without_one() -> None:
+    columns = {"agent_id": [1, 2], "x": [0.0, 0.0], "y": [0.0, 0.0], "theta": [0.0, 0.0], "vx": [0.0, 0.0], "vy": [0.0, 0.0], "animation_state": [1, 1]}
+    assert [p.radius for p in _adapter()._agent_states_to_pedestrians(_frame(1, radius=[0.325, 0.3], **columns)).pedestrians] == pytest.approx([0.325, 0.3])
+    assert [p.radius for p in _adapter()._agent_states_to_pedestrians(_frame(1, **columns)).pedestrians] == [0.0, 0.0]
+
+
 def test_agents_parked_on_their_held_seat_rest_on_it() -> None:
     adapter = _adapter()
     adapter._seats = {"env_0/bed": [Seat(x=2.0, y=0.0, height=0.6)], "env_0/stool": [Seat(x=-2.0, y=0.0, height=math.nan)]}
