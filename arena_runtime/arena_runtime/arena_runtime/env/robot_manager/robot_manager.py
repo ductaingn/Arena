@@ -52,7 +52,6 @@ if typing.TYPE_CHECKING:
 _NAV2_QUIET_NODES = (
     'behavior_server',
     'bt_navigator',
-    'collision_monitor',
     'controller_server',
     'lifecycle_manager_navigation',
     'nav2_container',
@@ -64,6 +63,8 @@ _NAV2_QUIET_NODES = (
 _NAV2_QUIET_RULES = '+[' + ', '.join(f'**/{n}:error' for n in _NAV2_QUIET_NODES) + ']'
 
 _MOVEIT_QUIET_RULES = '+[**/moveit/**:error]'
+
+_COLLISION_MONITOR_RULES = '+[**/collision_monitor:info]'
 
 _CONTROLLER_POLL = 0.2
 _CM_CALL_TIMEOUT = 10.0
@@ -87,6 +88,7 @@ def log_level_actions(spec: str) -> list[NodeLogLevelExtension.SetGlobalLogLevel
         NodeLogLevelExtension.SetGlobalLogLevelAction(spec),
         NodeLogLevelExtension.SetGlobalLogLevelAction(_NAV2_QUIET_RULES, fallback=True),
         NodeLogLevelExtension.SetGlobalLogLevelAction(_MOVEIT_QUIET_RULES, fallback=True),
+        NodeLogLevelExtension.SetGlobalLogLevelAction(_COLLISION_MONITOR_RULES, fallback=True),
     ]
 
 
