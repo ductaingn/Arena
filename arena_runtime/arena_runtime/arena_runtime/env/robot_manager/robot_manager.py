@@ -26,6 +26,7 @@ from arena_rclpy_mixins.Async import LaunchHandle
 from arena_rclpy_mixins.shared import FrameNamespace, Namespace
 from arena_robots.Robot import RobotView
 from arena_simulation_setup.shared.conditions import render_until
+from arena_simulation_setup.utils.face import front_angle
 from shapely.ops import polylabel
 
 from arena_runtime._node import NodeInterface
@@ -100,8 +101,6 @@ def footprint_radius(config: RobotView) -> float:
 
 def _front_yaw(obstacle: Obstacle) -> float:
     """Yaw of an object's annotated front (`face`), behind its yaw without one, the side HumanSim queues people at."""
-    from arena_runtime.humans.support import front_angle
-
     front = front_angle((obstacle.model.resolve_sync().annotation or {}).get('face'))
     return obstacle.pose.orientation.to_yaw() + (math.pi if front is None else front)
 
