@@ -411,6 +411,16 @@ def test_the_manifest_lists_only_a_controls_own_edits_on_an_edited_world(edited:
     assert listed and listed == [(control.name, [control.edits[-1].id]) for chain in chains for _, control in made[chain.site.name]]
 
 
+def test_controls_refuse_a_site_that_is_not_the_chains_base(queue: Site, edited: Site) -> None:
+    from arena_simulation_setup.generative.flowedit.edit import apply
+    from arena_simulation_setup.generative.flowedit.generate import controls
+
+    chain = generate(edited, seed=0, types=[EditType.MOVE])[0]
+    other = apply(queue, "move", "obj:fountain", {"x": 15.0, "y": 11.5})
+    with pytest.raises(ValueError, match="is not the base of"):
+        controls(other, chain)
+
+
 def test_controls_are_saved_and_listed_in_the_manifest(queue: Site) -> None:
     from arena_simulation_setup.generative.flowedit.generate import controls
     from arena_simulation_setup.tree.World import WorldIdentifier
