@@ -448,7 +448,12 @@ def _people(base: Base, settings: Mapping[str, Any], needs: Mapping[str, NeedPla
         points = [pt for room in person.rooms if (pt := base.floor.point(room, point_rng)) is not None]
         ref = f"./{TYPES_DIR}/flow__{name}.yaml"
         types[ref] = _type_doc(f"flow__{name}", person.kind, settings, needs, "idle", {"idle": {"steps": _walk(points, settings["idle"]["stand"]), "then": "idle", "on_failure": "idle"}})
-        humans.append({"name": name, "model": person.model, "pose": person.home, "agent": {"agent_type": ref, "desired_velocity": person.speed}})
+        # a start point drawn here, not the home zone's name: the runtime draws a zone's point per world, so the base and
+        # each of its edits would start the same person at another spot
+        home_rng = random.Random(f"flowedit:{base.name}:{seed}:{name}:home")
+        start = base.floor.point(person.home, home_rng)
+        pose: Any = person.home if start is None else [start[0], start[1], round(home_rng.uniform(-math.pi, math.pi), 2)]
+        humans.append({"name": name, "model": person.model, "pose": pose, "agent": {"agent_type": ref, "desired_velocity": person.speed}})
     return humans, types
 
 

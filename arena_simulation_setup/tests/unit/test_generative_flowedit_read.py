@@ -69,6 +69,20 @@ def test_hospital_graph_queues_at_the_fountain(hospital: Result) -> None:
     assert all(h["name"].startswith("flow_") and "colleague" not in h["agent"]["agent_type"] for h in hospital.doc["humans"])
 
 
+def test_people_start_at_points_in_their_home_room(queue: Site, hospital: Result) -> None:
+    # a zone name would leave the start point to the runtime, which draws it per world: an edit would move the people
+    import shapely
+    from arena_simulation_setup.generative.flowedit.read import _base
+
+    base = _base(queue, None, S.load(), None, 0, [])
+    for person, human in zip(base.crowd.people, hospital.doc["humans"], strict=True):
+        x, y, yaw = human["pose"]
+        shape = base.floor.shape(person.home)
+        assert shape is not None and shape.buffer(1e-6).contains(shapely.Point(x - base.floor.origin[0], y - base.floor.origin[1]))
+        assert -3.15 <= yaw <= 3.15
+    assert read(queue, seed=1).doc["humans"][0]["pose"] != hospital.doc["humans"][0]["pose"]
+
+
 def test_only_stated_needs_are_sought_by_default(hospital: Result) -> None:
     assert list(hospital.needs) == ["thirst"]
     assert {o["name"] for o in hospital.doc["objects"]} == {"exam_chair_1", "fountain", "gathering_area", "patient_bed_1", "reception_desk"}

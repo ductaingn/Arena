@@ -1,0 +1,44 @@
+# PEDS runs over FLOWEDIT edits: train, held-out edits and held-out worlds. `flowedit sweep` records every run (see split.py).
+#
+# Each base world's edits come from `flowedit generate <base> --scenario <scenario> --seed <seed> --per-type <per_type>`,
+# one chain per edit type and index, in the generator's order (move, insert, remove, function, access, layout).
+#   train           hospital_1 itself and chains 1-2 of every edit type
+#   held_out_edits  chain 3 of every edit type on hospital_1: edit types seen in train, at other targets and values
+#   held_out_worlds office_1 and chain 1 of every edit type on it: no run of office_1 is in train
+# Only hospital_1 (queue) and office_1 (default) ship a scenario with a need-satisfying object; generated layouts have none.
+format: flowedit-split/1
+sources:
+  hospital_1: {scenario: queue, seed: 0, per_type: 3, steps: 1}
+  office_1: {scenario: default, seed: 0, per_type: 1, steps: 1}
+duration: 300
+seeds: [0]
+partitions:
+  train:
+    - hospital_1
+    - hospital_1__9f4189dc  # move fountain
+    - hospital_1__6f3a2bdf  # move fountain
+    - hospital_1__23a2f73a  # insert water dispenser
+    - hospital_1__95fd8b6d  # insert water dispenser
+    - hospital_1__6ed0b4ea  # remove fountain
+    - hospital_1__920f4b7c  # remove waiting_sofa_3
+    - hospital_1__638f0641  # function fountain
+    - hospital_1__efd48775  # function fountain
+    - hospital_1__c485e3a4  # access patient_ward_door_2
+    - hospital_1__d24b53b6  # access patient_ward_door_1
+    - hospital_1__54fbb0eb  # layout wc_waiting_stall_3_door
+    - hospital_1__5af68761  # layout doctors_resting_room_door
+  held_out_edits:
+    - hospital_1__de49ece0  # move fountain
+    - hospital_1__2080d201  # insert water dispenser
+    - hospital_1__c4bd8e8b  # remove wc_pharmacy_toilet_paper_2
+    - hospital_1__daff8b6d  # function fountain
+    - hospital_1__8866ca6d  # access schedule fire_alarm
+    - hospital_1__71e5baec  # layout gen_door_1
+  held_out_worlds:
+    - office_1
+    - office_1__59fe6ae2  # move fountain
+    - office_1__efc298f4  # insert water cooler
+    - office_1__3578b71c  # remove fountain
+    - office_1__63b53335  # function fountain
+    - office_1__44c89ba8  # access reception_to_hallway_2
+    - office_1__05d4edbd  # layout meeting_1_to_sub_hallway

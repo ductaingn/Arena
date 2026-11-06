@@ -15,7 +15,7 @@ kg.yaml (room purposes, read)  --+                              +-- read --> sce
 
 `flowedit build <world> [<scenario>]`, or `python3 -m arena_simulation_setup.generative.flowedit.cli build ...`. A dry run prints the graph, `--write` writes it to `flowgraph.yaml` next to the scenario's `scenario.yaml` (or `--out`). Worlds resolve as in [generative/scenario](../scenario/README.md#cli).
 
-`flowedit read <world> [<scenario>]` [reads](#reading-a-site) the site of a shipped world and scenario, or of a world `flowedit edit` saved, into `<world>/scenarios/flowedit_<scenario>/` (or `--name`). A dry run prints the scenario, `--write` writes it and replaces only a scenario carrying the generated marker unless `--force`. `--settings` names a crowd settings file, `--count`, `--scale` and `--local-planner` override it, `--seed` (default 0) keys every draw.
+`flowedit read <world> [<scenario>]` [reads](#reading-a-site) the site of a shipped world and scenario, or of a world `flowedit edit` saved, into `<world>/scenarios/flowedit_<scenario>/` (or `--name`). A dry run prints the scenario, `--write` writes it and replaces only a scenario carrying the generated marker unless `--force`. `--settings` names a crowd settings file, `--count`, `--scale` and `--local-planner` override it, `--seed` (default 0) keys every draw. `flowedit run` and `flowedit sweep` [record PEDS runs](#recording-runs).
 
 ```bash
 flowedit build hospital_1 queue --write
@@ -179,6 +179,32 @@ flowedit read hospital_1 queue --write                  # hospital_1/scenarios/f
 flowedit read hospital_1__<id> --write                  # the same people, the fountain's step 20 s
 ```
 
+## Recording runs
+
+`flowedit run <world> [<scenario>] [--edit TYPE TARGET [-p KEY=VALUE ...]]` is the whole chain in one command: apply the edit (or none) and save the world, read the crowd into it under `--settings` and `--seed` as `scenarios/flowedit_<scenario>_<settings digest>_s<seed>/`, launch it headless (`sim:=dummy human:=arena`) with HumanSim recording (`humansim.record:=true`), stop after `--duration` seconds (default 300) and write the run to `$ARENA_DATA_DIR/flowedit_runs/<world>__<scenario>/` (or `--out`). `--launch-arg` passes more `arena launch` arguments, `--dry-run` prints the world and launch without saving or launching. A finished run is skipped unless `--again`.
+
+```bash
+flowedit run hospital_1 queue --edit function obj:fountain -p dwell=20 --settings crowd.yaml --seed 3
+```
+
+| File | Content |
+|---|---|
+| `run.yaml` | world, base, edits, settings and digest, seed, launch command, code commit, the reader's provenance, a track summary; written last |
+| `tracks.parquet` | HumanSim's agent states (`time` from the first frame, `agent_id`, `x`, `y`, `vx`, `vy`, `radius`, `planner`, `source_name`, `source_seq`) with `name` and `key` |
+| `humansim/` | HumanSim's recording: the bag and `recording.yaml` |
+| `launch.log` | the launch's output |
+
+`key` pairs an agent across runs: `<source_name>#<source_seq>` for a person an entrance released, never the agent id (HumanSim keys a released agent's draws on its source and release index), and the person's scenario name for the people the reader places, who are the same in every edit of a world. Tracks are cut to the first `--duration` seconds; `run.yaml` warns when the sim ran too slowly to fill them.
+
+`flowedit sweep <split> [--partition P] [--settings S] [--jobs N]` records every run of a split: it generates the split's edited worlds again, then runs each world of the chosen partitions once per seed, `--jobs` launches at a time, each on its own ROS domain from `--domain-base` (default 150). Runs land in `$ARENA_DATA_DIR/flowedit_runs/<split name>/`, one log per run in `_sweep/`; finished runs are skipped, so a sweep resumes. A split file ([`split.py`](split.py)) names the worlds of `train`, `held_out_edits` (other edits of the train worlds) and `held_out_worlds` (worlds with no run in train), and per base world the `flowedit generate` call that makes its edited worlds again under those names. [`splits/peds_v1.yaml`](splits/peds_v1.yaml) is the first.
+
+```bash
+flowedit sweep splits/peds_v1.yaml --jobs 2                                   # the training crowd
+flowedit sweep splits/peds_v1.yaml --partition held_out_edits --settings test_crowd.yaml
+```
+
+Entrance visitors under `arena launch` do not yet follow their visitor type: they walk from the source straight to the sink, so only the reader's placed people carry the site's demand in the tracks.
+
 ## Crowd settings
 
 Global, not per site: the same file gives a crowd on any graph. Every key and its default is in [`settings.py`](settings.py); a file sets only what it changes, an unknown key is an error. A distribution (`mean`, `std`, `clip_low`, `clip_high`) given in a file replaces the default one whole, so a raised mean never keeps the default's clips, and a mean outside its own clips is an error. A need's own `initial`, `decay_rate` or `below` replaces the `"*"` entry's.
@@ -202,4 +228,7 @@ entrances: {rate: 0.1, max_concurrent: 6, max_total: 30}
 | `settings.py` | crowd settings and their defaults |
 | `edit.py` | edit operations, sites, saving edited worlds |
 | `generate.py` | sampling edits from a seed, geometry-only controls, the manifest |
-| `cli.py` | `flowedit build`, `flowedit edit`, `flowedit generate`, `flowedit read` |
+| `run.py` | one edit, settings and seed to a recorded run and its tracks |
+| `split.py` | split files and the sweep over them |
+| `splits/` | committed splits |
+| `cli.py` | `flowedit build`, `flowedit edit`, `flowedit generate`, `flowedit read`, `flowedit run`, `flowedit sweep` |
