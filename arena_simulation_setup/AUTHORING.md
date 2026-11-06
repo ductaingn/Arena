@@ -1067,8 +1067,10 @@ in front of a charger or the door side of a parcel locker. Its name then works
 as a goto target like a zone: the robot is sent to a free cell with its spawn
 clearance near the dock's deepest point (within half the dock's inner radius,
 so the planner's goal tolerance cannot stop it outside), facing the object,
-and the phase is met once `robot in <object>` holds, an atom `until:` and
-`conditions:` can use too. The dock moves and turns with the object's `pose`.
+or its annotated front (`face`, else behind its yaw) where the dock covers the
+object's own origin, as a waiting bay's slot does, and the phase is met once
+`robot in <object>` holds, an atom `until:` and `conditions:` can use too. The
+dock moves and turns with the object's `pose`.
 Size it so its middle lies at least the robot's radius plus
 `task.episode.spawn.robot_clearance` off the object's footprint, and its
 inner radius is at least twice the planner's goal tolerance (1.2 x 1.0 m
