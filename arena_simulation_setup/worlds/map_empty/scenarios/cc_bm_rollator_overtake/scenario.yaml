@@ -1,0 +1,7 @@
+format: arena-scenario/2
+humans:
+- {name: rollator, model: arenian, pose: [11.0, 11.6, 0.0], waypoints: [[26.0, 11.6, 0.0]], waypoint_mode: once, agent: {agent_type: elder_rollator, desired_velocity: 0.2}}
+robots:
+- start: [9.0, 11.5, 0.0]
+  phases:
+  - {goto: [21.0, 11.5, 0.0]}

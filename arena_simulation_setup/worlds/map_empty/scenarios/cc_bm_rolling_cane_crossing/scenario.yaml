@@ -1,0 +1,7 @@
+format: arena-scenario/2
+humans:
+- {name: rolling_cane, model: arenian, pose: [15.0, 6.0, 1.5708], waypoints: [[15.0, 6.0, 0.0], [15.0, 17.0, 0.0]], waypoint_mode: reverse, agent: {agent_type: blind_rolling_cane}}
+robots:
+- start: [9.0, 11.5, 0.0]
+  phases:
+  - {goto: [21.0, 11.5, 0.0]}
