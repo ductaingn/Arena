@@ -1,0 +1,7 @@
+format: arena-scenario/2
+humans:
+- {name: white_cane, model: arenian, pose: [20.5, 11.8, 3.1416], waypoints: [[9.5, 11.6, 0.0]], waypoint_mode: once, agent: {agent_type: blind_white_cane}}
+robots:
+- start: [9.0, 11.5, 0.0]
+  phases:
+  - {goto: [21.0, 11.5, 0.0]}
