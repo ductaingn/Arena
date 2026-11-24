@@ -231,6 +231,7 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
         self._ped_clips: dict[str, frozenset[str]] = {}
         self._gait = AnimationManager(logger=self._logger, fps=20.0)
         self._gait_prev_stamp: dict[int, float] = {}
+        self._ped_types: dict[int, str] = {}  # agent type of each ped id at the last publish
         self._pose_profiles: dict[str, PoseProfile] = {}
         self._devices: dict[str, DeviceSpec | None] = {}
         self._held_bodies = HeldBodies(self._logger.warning)
@@ -299,7 +300,11 @@ class BaseHumanSimulator(NodeInterface, abc.ABC):
         current_ids: set[int] = {ped.id for ped in out.pedestrians}
         for stale in self._joystick.known() - current_ids:
             self._joystick.forget(stale)
-        for stale in sorted(set(self._gait_prev_stamp) - current_ids):
+        # an id whose agent type changed is a new person (an episode reset reuses ids): it starts in its own pose, not
+        # crossfading out of the last one's
+        retyped = {ped.id for ped in out.pedestrians if self._ped_types.get(ped.id, ped.agent_type) != ped.agent_type}
+        self._ped_types = {ped.id: ped.agent_type for ped in out.pedestrians}
+        for stale in sorted((set(self._gait_prev_stamp) - current_ids) | (retyped & set(self._gait_prev_stamp))):
             self._gestures.forget(stale)
             self._gait.forget(stale)
             self._seat_plans.pop(stale, None)
