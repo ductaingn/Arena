@@ -474,6 +474,25 @@ def test_a_changed_profile_crossfades_the_gait() -> None:
     assert out == pytest.approx(gen.compute(9, 1, 1.0, 0.0, phase=phi, profile=push))
 
 
+def test_stopping_blends_the_stride_into_the_stance() -> None:
+    from arena_runtime.humans.profile import resolve_pose_profile
+
+    m = AnimationManager(logger=StubLogger(), fps=FPS, clips=NoClips())
+    walk = resolve_pose_profile({"walk": {"base": "walk_whitecane"}})
+    for _ in range(7):
+        m.compute(1, 1, 0.8, DT, profile=walk)
+    first = m.compute(1, 0, 0.0, DT, profile=walk)
+    gen = m.gait_generator.__class__()
+    phi = m.gait_generator.phase(1)
+    stride, stance = gen.compute(9, 1, 0.0, 0.0, phase=phi, profile=walk), gen.compute(9, 0, 0.0, 0.0, phase=phi, profile=walk)
+    w = DT / AnimationManager.BASE_CROSSFADE_S
+    assert first == pytest.approx({name: stride[name] * (1.0 - w) + stance[name] * w for name in JOINT_NAMES})
+    out = first
+    for _ in range(round(AnimationManager.BASE_CROSSFADE_S / DT)):
+        out = m.compute(1, 0, 0.0, DT, profile=walk)
+    assert out == pytest.approx(gen.compute(9, 0, 0.0, 0.0, phase=m.gait_generator.phase(1), profile=walk))
+
+
 def test_changing_back_mid_fade_reverses_it_without_a_jump() -> None:
     from arena_runtime.humans.profile import resolve_pose_profile
 

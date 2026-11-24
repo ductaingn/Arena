@@ -137,11 +137,15 @@ class Overlay:
         return self.release_s > 0.0
 
 
+_SYNTHESIS_STATES = {"walk": 1, "run": 2, "idle": 0}  # Pedestrian.msg state the gait generator synthesizes each from
+
+
 @attrs.define
 class _Transition:
     anim: Animation
     playhead: float
     t: float = 0.0
+    gait_state: int | None = None  # set when crossfading between two synthesized gaits: the state faded out
 
 
 class AnimationManager:
@@ -151,7 +155,7 @@ class AnimationManager:
     """
 
     # Use GaitGenerator to systhesis poses instead of replaying animation
-    USE_SYNTHESIS = ["walk", "run", "idle"]
+    USE_SYNTHESIS = list(_SYNTHESIS_STATES)
 
     BASE_CROSSFADE_S = 0.5
     PROFILE_CROSSFADE_S = 0.6  # an agent's gait profile changing (another agent type, an interaction's own) blends over this
@@ -591,8 +595,10 @@ class AnimationManager:
         if profile is not None:
             self._change_profile(agent_id, profile, dt)
         cur_name = self._ped_anim.get(agent_id)
-        if cur_name is not None and cur_name != next_anim.name and not (cur_name in self.USE_SYNTHESIS and next_anim.name in self.USE_SYNTHESIS):
-            self._transitions[agent_id] = _Transition(anim=self.animations[cur_name], playhead=self._get_playhead(agent_id))
+        if cur_name is not None and cur_name != next_anim.name:
+            # walk, run and idle share the gait phase: the old gait is read there, so a stopping walker settles into the stance
+            gait_state = _SYNTHESIS_STATES.get(cur_name) if next_anim.name in self.USE_SYNTHESIS else None
+            self._transitions[agent_id] = _Transition(anim=self.animations[cur_name], playhead=self._get_playhead(agent_id), gait_state=gait_state)
         self.set_ped_anim(agent_id, next_anim.name)
 
         gait_angles: dict[str, float] | None = None
@@ -621,7 +627,12 @@ class AnimationManager:
             transition.t += dt
             transition.playhead += dt
             w = min(transition.t / self.BASE_CROSSFADE_S, 1.0)
-            from_angles = gait() if transition.anim.name in self.USE_SYNTHESIS else self._sample_single_animation(transition.playhead, transition.anim)
+            if transition.gait_state is not None:
+                from_angles = self.gait_generator.compute(agent_id, transition.gait_state, speed, 0.0, phase=self.gait_generator.phase(agent_id), profile=profile)
+            elif transition.anim.name in self.USE_SYNTHESIS:
+                from_angles = gait()
+            else:
+                from_angles = self._sample_single_animation(transition.playhead, transition.anim)
             base_angles = {name: from_angles[name] * (1.0 - w) + base_angles[name] * w for name in JOINT_NAMES}
             from_tilt = None if transition.anim.name in self.USE_SYNTHESIS else self._sample_tilt(transition.playhead, transition.anim)
             if tilt is not None or from_tilt is not None:
