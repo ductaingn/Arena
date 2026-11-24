@@ -12,8 +12,8 @@
 	update = checkout
 [submodule "arena_isaac"]
 	path = arena_isaac
-	url = https://github.com/Arena-Rosnav/arena-isaac
-	branch = isaac6.1.0
+	url = https://github.com/ductaingn/arena-isaac.git
+	branch = fix/first-pose-at-once
 	update = checkout
 [submodule "arena_training"]
 	path = arena_training
@@ -32,8 +32,8 @@
 	update = checkout
 [submodule "humansim"]
 	path = humansim
-	url = https://github.com/voshch/humansim.git
-	branch = jazzy
+	url = https://github.com/ductaingn/humansim.git
+	branch = feature/cane-robot-halt
 	update = checkout
 [submodule "arena_auditory"]
 	path = arena_auditory
