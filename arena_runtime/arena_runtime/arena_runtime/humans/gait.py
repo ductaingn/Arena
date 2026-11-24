@@ -26,6 +26,13 @@ _WALKING = 1
 _RUNNING = 2
 # PANIC=3, SURPRISED=4, CURIOUS=5, THREATENING=6 -> treated as idle
 
+# Stride: the swing shrinks with speed below the agent's own walking speed (tracked over STRIDE_REF_TAU_S), so a
+# stopping walker's legs come to rest with its body. The shrink is rate-limited so a gait's dips in speed within one
+# cycle (a walking frame's lift) do not pulse the swing.
+STRIDE_REF_TAU_S = 2.0
+STRIDE_FALL_PER_S = 1.0
+STRIDE_RISE_PER_S = 4.0
+
 # Advisory generator-side joint limits: (lo, hi) in radians, ordered to match JOINT_NAMES.
 LIMITS: tuple[tuple[float, float], ...] = (
     (-0.6, 0.6),  # r_waist
@@ -80,6 +87,7 @@ class GaitGenerator:
 
     def __init__(self) -> None:
         self._phase: dict[int, float] = {}
+        self._stride: dict[int, tuple[float, float]] = {}  # agent -> (walking speed, stride share)
 
     def _get_phase(self, agent_id: int) -> float:
         if agent_id not in self._phase:
@@ -90,8 +98,9 @@ class GaitGenerator:
         self._phase[agent_id] = phi
 
     def forget(self, agent_id: int) -> None:
-        """Drop accumulated phase state for a despawned agent."""
+        """Drop accumulated phase and stride state for a despawned agent."""
         self._phase.pop(agent_id, None)
+        self._stride.pop(agent_id, None)
 
     def phase(self, agent_id: int) -> float:
         """Return the current walk-cycle phase in radians for an agent, initializing it if unseen."""
@@ -146,8 +155,17 @@ class GaitGenerator:
         phi = self._advance(agent_id, math.copysign(2.0 * math.pi * cadence * dt, speed), phase)
 
         angles = {name: 0.0 for name in self.JOINT_NAMES}
-        angles.update(gait.evaluate(phi, gait.gain(speed_abs)))
+        angles.update(gait.evaluate(phi, gait.gain(speed_abs), self._advance_stride(agent_id, speed_abs, dt)))
         return angles
+
+    def _advance_stride(self, agent_id: int, speed_abs: float, dt: float) -> float:
+        walking, stride = self._stride.get(agent_id, (speed_abs, 1.0))
+        if dt > 0.0:
+            walking += (speed_abs - walking) * (1.0 - math.exp(-dt / STRIDE_REF_TAU_S))
+            target = min(speed_abs / walking, 1.0) if walking > 1e-3 else 1.0
+            stride += min(max(target - stride, -STRIDE_FALL_PER_S * dt), STRIDE_RISE_PER_S * dt)
+            self._stride[agent_id] = (walking, stride)
+        return stride
 
     def _gait_idle_profile(self, agent_id: int, dt: float, gait: GaitProfile, phase: float | None) -> dict[str, float]:
         phi = self._advance(agent_id, 2.0 * math.pi * 0.25 * dt, phase)

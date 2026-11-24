@@ -80,10 +80,11 @@ class Signal:
     mean: float
     harmonics: tuple[tuple[float, float], ...] = ()
 
-    def evaluate(self, phi: float, shift: float, gain: float) -> float:
+    def evaluate(self, phi: float, shift: float, gain: float, stride: float = 1.0) -> float:
+        """gain scales the whole signal, stride only its swing about the mean (the held pose)."""
         v = self.mean
         for k, (amp, ph) in enumerate(self.harmonics, start=1):
-            v += amp * math.sin(k * (phi + shift) + ph)
+            v += stride * amp * math.sin(k * (phi + shift) + ph)
         return gain * v
 
     def scaled(self, gain: float) -> Signal:
@@ -201,9 +202,9 @@ class GaitProfile:
     gain: GainLaw = GainLaw()
     limits: Mapping[str, tuple[float, float]] = attrs.field(factory=dict)
 
-    def evaluate(self, phi: float, gain: float) -> dict[str, float]:
+    def evaluate(self, phi: float, gain: float, stride: float = 1.0) -> dict[str, float]:
         phi = self.phase_warp(phi)
-        return {joint: js.signal.evaluate(phi, js.shift, gain) for joint, js in self.joints.items()}
+        return {joint: js.signal.evaluate(phi, js.shift, gain, stride) for joint, js in self.joints.items()}
 
     def targets(self, name: str) -> dict[str, JointSignal]:
         """Joints an op named `name` applies to: a signal key, a bare joint, or (asymmetric only) one side of a pair."""

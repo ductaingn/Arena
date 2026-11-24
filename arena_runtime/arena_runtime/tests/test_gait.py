@@ -228,3 +228,32 @@ def test_animation_manager_hands_phase_and_profile_to_the_gait() -> None:
     expected = GaitGenerator().compute(11, _WALKING, 1.0, 0.05, phase=1.25, profile=profile)
     assert mgr.compute(11, _WALKING, 1.0, 0.05, phase=1.25, profile=profile) == expected
     assert mgr.phase(11) == 1.25
+
+
+def _swing_and_pose(gen: GaitGenerator, agent: int, speed: float, profile: object) -> tuple[float, dict[str, float]]:
+    """The stride share the walker swings with at this speed (0.1 s on), and its pose then."""
+    angles = gen.compute(agent, _WALKING, speed, 0.1, profile=profile)  # type: ignore[arg-type]
+    return gen._stride[agent][1], angles
+
+
+def test_a_stopping_walker_shrinks_its_stride_but_keeps_its_held_pose() -> None:
+    from arena_runtime.humans.profile import resolve_pose_profile
+
+    profile = resolve_pose_profile({"walk": {"base": "walk_rollator"}})
+    gen = GaitGenerator()
+    for _ in range(40):
+        full, _ = _swing_and_pose(gen, 1, 0.6, profile)
+    assert full == pytest.approx(1.0)
+    shares = [_swing_and_pose(gen, 1, v, profile)[0] for v in (0.45, 0.3, 0.15, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+    assert shares == sorted(shares, reverse=True) and shares[-1] == pytest.approx(0.0, abs=1e-9)
+    still = gen.compute(1, _WALKING, 0.0, 0.0, profile=profile)
+    mean = {joint: profile.walk.gain(0.0) * js.signal.mean for joint, js in profile.walk.joints.items()}
+    assert {joint: still[joint] for joint in mean} == pytest.approx(mean), "no swing left: the held pose (hands on the grips)"
+
+
+def test_a_short_dip_in_speed_does_not_pulse_the_stride() -> None:
+    gen = GaitGenerator()
+    for _ in range(40):
+        gen.compute(1, _WALKING, 0.2, 0.1)
+    gen.compute(1, _WALKING, 0.0, 0.1)
+    assert gen._stride[1][1] >= 0.9
